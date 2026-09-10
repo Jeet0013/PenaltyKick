@@ -20,7 +20,7 @@ That splits everything below into two very different confidence levels:
   whether the real Unity API matches, because the stubs encode my assumptions.
   **Unverified until someone opens the editor.**
 
-To clear this: free ~20 GB, install Unity **6000.0.23f1** with Android Build
+To clear this: free ~20 GB, install Unity **6000.0.83f1** with Android Build
 Support, open `unity/CyberGoalShootout`, press Play. No scene setup is needed —
 `GameBootstrap` builds itself via `RuntimeInitializeOnLoadMethod`.
 

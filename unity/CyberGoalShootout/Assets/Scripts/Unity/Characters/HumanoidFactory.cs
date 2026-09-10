@@ -151,20 +151,12 @@ namespace CyberGoal.Unity.Characters
 
         private static Material MakeMaterial(Color colour, float roughness, Color? emissive = null)
         {
-            // URP/Lit, falling back to whatever the pipeline offers if the shader is
-            // missing — a pink scene is a worse failure than a slightly wrong one.
-            Shader shader = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard");
-            var material = new Material(shader);
-            material.color = colour;
-
-            if (material.HasProperty("_Smoothness")) material.SetFloat("_Smoothness", 1f - roughness);
-            else if (material.HasProperty("_Glossiness")) material.SetFloat("_Glossiness", 1f - roughness);
-
-            if (emissive.HasValue)
-            {
-                material.EnableKeyword("_EMISSION");
-                if (material.HasProperty("_EmissionColor")) material.SetColor("_EmissionColor", emissive.Value);
-            }
+            // Shader choice is ShaderLibrary's problem: asking for a URP shader
+            // when URP is installed but not the active pipeline gives a shader
+            // that is found, used, and drawn magenta.
+            var material = new Material(Environment.ShaderLibrary.Lit) { color = colour };
+            Environment.ShaderLibrary.SetSmoothness(material, 1f - roughness);
+            if (emissive.HasValue) Environment.ShaderLibrary.SetEmission(material, emissive.Value);
             return material;
         }
     }

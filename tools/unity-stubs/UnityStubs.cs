@@ -363,6 +363,11 @@ namespace UnityEngine
 
     namespace Rendering
     {
+        public class RenderPipelineAsset : Object { }
+        public static class GraphicsSettings
+        {
+            public static RenderPipelineAsset currentRenderPipeline => null;
+        }
         public enum ShadowCastingMode { Off, On }
         public enum BlendMode { SrcAlpha, OneMinusSrcAlpha, One, Zero }
         public enum RenderQueue { Transparent = 3000 }

@@ -375,46 +375,24 @@ namespace CyberGoal.Unity.Environment
     }
 
     /// <summary>Material helpers, so the URP shader name is written once.</summary>
+    /// <summary>Material helpers. Shader choice lives in <see cref="ShaderLibrary"/>.</summary>
     internal static class Materials
     {
         internal static Material Lit(Color colour, float smoothness = 0.3f,
             Color? emission = null, bool transparent = false)
         {
-            Shader shader = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard");
-            var material = new Material(shader) { color = colour };
-
-            if (material.HasProperty("_Smoothness")) material.SetFloat("_Smoothness", smoothness);
-            else if (material.HasProperty("_Glossiness")) material.SetFloat("_Glossiness", smoothness);
-
-            if (emission.HasValue)
-            {
-                material.EnableKeyword("_EMISSION");
-                if (material.HasProperty("_EmissionColor"))
-                    material.SetColor("_EmissionColor", emission.Value);
-            }
-
-            if (transparent) MakeTransparent(material);
+            var material = new Material(ShaderLibrary.Lit) { color = colour };
+            ShaderLibrary.SetSmoothness(material, smoothness);
+            if (emission.HasValue) ShaderLibrary.SetEmission(material, emission.Value);
+            if (transparent) ShaderLibrary.MakeTransparent(material);
             return material;
         }
 
         internal static Material Unlit(Color colour, bool transparent = false, bool vertexColour = false)
         {
-            Shader shader = Shader.Find("Universal Render Pipeline/Unlit")
-                            ?? Shader.Find("Unlit/Color")
-                            ?? Shader.Find("Standard");
-            var material = new Material(shader) { color = colour };
-            if (transparent) MakeTransparent(material);
+            var material = new Material(ShaderLibrary.Unlit) { color = colour };
+            if (transparent) ShaderLibrary.MakeTransparent(material);
             return material;
-        }
-
-        private static void MakeTransparent(Material material)
-        {
-            material.SetFloat("_Surface", 1f); // URP: transparent
-            material.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
-            material.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
-            material.SetInt("_ZWrite", 0);
-            material.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
-            material.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
         }
     }
 }
