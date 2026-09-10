@@ -100,7 +100,15 @@ namespace CyberGoal.Unity.Characters
         /// </remarks>
         private Material BuildKitMaterial()
         {
-            var material = new Material(ShaderLibrary.Lit) { color = primary };
+            // CharacterKit, not Lit. The mesh carries its whole kit in the vertex
+            // colour channel and URP/Lit does not read that channel, so using Lit
+            // discards every hem, boot and facial feature and renders the figure
+            // in one flat colour — with nothing in C# to indicate why.
+            //
+            // The tint is left white so the baked colours arrive unmodified; the
+            // team identity is already in the vertex data.
+            var material = new Material(ShaderLibrary.CharacterKit) { color = Color.white };
+            if (material.HasProperty("_BaseColor")) material.SetColor("_BaseColor", Color.white);
             ShaderLibrary.SetSmoothness(material, 0.28f);
             // A low emissive in the team's neon keeps the figure separated from a
             // dark pitch without making it glow.

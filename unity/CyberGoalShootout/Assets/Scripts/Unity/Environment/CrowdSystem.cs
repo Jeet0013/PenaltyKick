@@ -22,79 +22,77 @@ namespace CyberGoal.Unity.Environment
     /// <para>
     /// <b>Why not billboards.</b> §6 of the art direction rules out flat cutouts
     /// and colour dots: a crowd has to read as human figures with heads, torsos
-    /// and arms. The previous version drew textureless quads and looked exactly
-    /// like the confetti the brief warns against.
+    /// and arms. The first version drew textureless quads and looked exactly like
+    /// the confetti the brief warns against.
+    /// </para>
+    /// <para>
+    /// <b>Why colour buckets rather than per-instance tints.</b> The obvious
+    /// approach is one material plus a <see cref="MaterialPropertyBlock"/> holding
+    /// a colour array, and it silently does not work: per-instance properties are
+    /// only read if the shader declares them inside an instancing buffer, and
+    /// stock URP/Lit declares <c>_BaseColor</c> in a plain per-material CBUFFER.
+    /// Nothing errors — every spectator simply comes out the same colour, and the
+    /// cause is invisible from the C# side.
+    /// </para>
+    /// <para>
+    /// So spectators are grouped into a small set of pre-tinted materials and each
+    /// group is drawn separately. A few dozen draw calls instead of one, which is
+    /// still nothing, and it works on any shader without writing a custom one.
     /// </para>
     /// <para>
     /// <b>Why one mesh drawn many times.</b> §48 wants a stadium that looks full
-    /// without destroying mobile performance, and a thousand separate GameObjects
-    /// with their own meshes is a thousand draw calls. This builds a handful of
-    /// seated humanoid meshes once, then draws each of them for every spectator
-    /// that uses it via <see cref="Graphics.DrawMeshInstanced"/> — a few dozen
-    /// draw calls for the whole bowl, with per-instance colour so no two
-    /// neighbours match.
-    /// </para>
-    /// <para>
-    /// <b>Distance decides detail, not importance.</b> Near rows get their own
-    /// pose and animate; far rows are the same meshes at lower density and do not
-    /// move individually. The silhouette is what carries at 40 m, and §7 of the
-    /// art direction only asks that far spectators still read as a stadium full of
-    /// people.
+    /// without destroying mobile performance, and a thousand GameObjects with
+    /// their own meshes is a thousand draw calls plus a thousand transforms to
+    /// update.
     /// </para>
     /// </remarks>
     public sealed class CrowdSystem : MonoBehaviour
     {
         private const float GoalZ = -(float)BallPhysics.Field.SpotToGoal;
+
         /// <summary>Unity's instanced draw call takes at most 1023 matrices.</summary>
         private const int BatchLimit = 1023;
 
-        private readonly List<Mesh> _meshes = new List<Mesh>();
-        private readonly List<Matrix4x4[]> _batches = new List<Matrix4x4[]>();
-        private readonly List<int> _batchMesh = new List<int>();
-        private readonly List<MaterialPropertyBlock> _blocks = new List<MaterialPropertyBlock>();
-        private readonly List<Vector4[]> _colours = new List<Vector4[]>();
+        /// <summary>Body silhouettes. Four is past the point anyone can tell at 30 m.</summary>
+        private const int Variants = 4;
 
-        private Material _material;
+        /// <summary>Tint groups: home, away and neutral, each in three values.</summary>
+        private const int Buckets = 9;
+
+        /// <summary>One drawable group: a mesh, a tinted material, and its instances.</summary>
+        private sealed class Batch
+        {
+            public Mesh Mesh;
+            public Material Material;
+            public Matrix4x4[] Matrices;
+            public Vector3[] Rest;
+            public Quaternion[] Rotations;
+            public float[] Phases;
+        }
+
+        private readonly List<Batch> _batches = new List<Batch>();
+        private readonly List<Mesh> _meshes = new List<Mesh>();
+        private readonly List<Material> _materials = new List<Material>();
+
         private CrowdMood _mood = CrowdMood.Idle;
         private float _moodBlend;
-
-        /// <summary>Resting transform of every instance, so animation is an offset.</summary>
-        private readonly List<Matrix4x4[]> _rest = new List<Matrix4x4[]>();
-        /// <summary>Per-instance position, rotation and phase, kept for re-posing.</summary>
-        private readonly List<Vector3[]> _positions = new List<Vector3[]>();
-        private readonly List<Quaternion[]> _rotations = new List<Quaternion[]>();
-        private readonly List<float[]> _phases = new List<float[]>();
         private float _clock;
-
-        private static readonly int ColorProperty = Shader.PropertyToID("_BaseColor");
-        private static readonly int LegacyColorProperty = Shader.PropertyToID("_Color");
 
         public void Build(int count, Color home, Color away)
         {
-            _material = new Material(ShaderLibrary.Lit) { color = Color.white };
-            ShaderLibrary.SetSmoothness(_material, 0.15f);
-            _material.enableInstancing = true;
-
-            // A handful of body shapes, reused. §8 of the art direction warns
-            // against cloning one person; it does not require a thousand unique
-            // meshes, and four silhouettes at 30 m is past the point anyone can
-            // tell them apart.
-            const int variants = 4;
-            for (int v = 0; v < variants; v++)
+            for (int v = 0; v < Variants; v++)
             {
                 _meshes.Add(SeatedFigure(BodyShape.Spectator(v * 7.3f + 1.7f), v));
             }
 
-            var matrices = new List<Matrix4x4>[variants];
-            var tints = new List<Vector4>[variants];
-            var positions = new List<Vector3>[variants];
-            var rotations = new List<Quaternion>[variants];
-            for (int v = 0; v < variants; v++)
+            for (int b = 0; b < Buckets; b++) _materials.Add(BucketMaterial(b, home, away));
+
+            // Gather per (variant, bucket) before batching, so each draw call is
+            // one mesh and one tint.
+            var groups = new List<(Vector3 Position, Quaternion Rotation, float Phase)>[Variants * Buckets];
+            for (int i = 0; i < groups.Length; i++)
             {
-                matrices[v] = new List<Matrix4x4>();
-                tints[v] = new List<Vector4>();
-                positions[v] = new List<Vector3>();
-                rotations[v] = new List<Quaternion>();
+                groups[i] = new List<(Vector3, Quaternion, float)>();
             }
 
             const int rows = 11;
@@ -122,79 +120,84 @@ namespace CyberGoal.Unity.Environment
                     Mathf.Sin(angle + jitter) * ring + GoalZ + 8f);
 
                 // Everyone faces the penalty spot, which is where the action is.
-                Vector3 lookAt = new Vector3(0f, height, GoalZ + 4f);
-                Quaternion rotation = Quaternion.LookRotation(
-                    new Vector3(lookAt.x - position.x, 0f, lookAt.z - position.z).normalized,
-                    Vector3.up);
+                Vector3 toCentre = new Vector3(-position.x, 0f, (GoalZ + 4f) - position.z);
+                Quaternion rotation = Quaternion.LookRotation(toCentre.normalized, Vector3.up);
 
-                int variant = i % variants;
-                matrices[variant].Add(Matrix4x4.TRS(position, rotation, Vector3.one));
-                positions[variant].Add(position);
-                rotations[variant].Add(rotation);
+                int variant = i % Variants;
+                // Split the bowl between the sides, with a scatter of neutrals.
+                float side = Hash(i * 1.7f);
+                int family = side < 0.32f ? 2 : (angle < Mathf.PI ? 0 : 1);
+                int value = Mathf.Min(2, (int)(Hash(i * 5.9f) * 3f));
+                int bucket = family * 3 + value;
 
-                // Split the bowl between the sides with a scatter of neutrals, then
-                // vary the value per person. A uniform tint reads as a painted
-                // surface rather than as thousands of separate people.
-                float r = Hash(i * 1.7f);
-                Color tint = r < 0.34f
-                    ? new Color(0.42f, 0.46f, 0.52f)
-                    : (angle < Mathf.PI ? home : away);
-                float value = 0.35f + Hash(i * 5.9f) * 0.5f;
-                tints[variant].Add(tint * value);
+                // Each spectator gets their own phase, so a celebrating crowd is a
+                // boil of individual people rather than one body moving in
+                // lockstep. §18 of the art direction asks for exactly this.
+                float phase = Hash(i * 2.3f) * Mathf.PI * 2f;
+
+                groups[variant * Buckets + bucket].Add((position, rotation, phase));
             }
 
-            for (int v = 0; v < variants; v++)
+            for (int v = 0; v < Variants; v++)
             {
-                _pendingPositions = positions[v];
-                _pendingRotations = rotations[v];
-                Batch(v, matrices[v], tints[v]);
+                for (int b = 0; b < Buckets; b++)
+                {
+                    Split(_meshes[v], _materials[b], groups[v * Buckets + b]);
+                }
             }
-            _pendingPositions = null;
-            _pendingRotations = null;
         }
 
-        private List<Vector3> _pendingPositions;
-        private List<Quaternion> _pendingRotations;
-
-        private void Batch(int meshIndex, List<Matrix4x4> matrices, List<Vector4> tints)
+        private void Split(Mesh mesh, Material material,
+            List<(Vector3 Position, Quaternion Rotation, float Phase)> members)
         {
-            for (int start = 0; start < matrices.Count; start += BatchLimit)
+            for (int start = 0; start < members.Count; start += BatchLimit)
             {
-                int size = Mathf.Min(BatchLimit, matrices.Count - start);
-                var slice = new Matrix4x4[size];
-                var colours = new Vector4[size];
+                int size = Mathf.Min(BatchLimit, members.Count - start);
+                var batch = new Batch
+                {
+                    Mesh = mesh,
+                    Material = material,
+                    Matrices = new Matrix4x4[size],
+                    Rest = new Vector3[size],
+                    Rotations = new Quaternion[size],
+                    Phases = new float[size]
+                };
+
                 for (int i = 0; i < size; i++)
                 {
-                    slice[i] = matrices[start + i];
-                    colours[i] = tints[start + i];
+                    (Vector3 position, Quaternion rotation, float phase) = members[start + i];
+                    batch.Rest[i] = position;
+                    batch.Rotations[i] = rotation;
+                    batch.Phases[i] = phase;
+                    batch.Matrices[i] = Matrix4x4.TRS(position, rotation, Vector3.one);
                 }
 
-                var block = new MaterialPropertyBlock();
-                block.SetVectorArray(ColorProperty, colours);
-                block.SetVectorArray(LegacyColorProperty, colours);
-
-                var positions = new Vector3[size];
-                var rotations = new Quaternion[size];
-                var phases = new float[size];
-                for (int i = 0; i < size; i++)
-                {
-                    positions[i] = _pendingPositions[start + i];
-                    rotations[i] = _pendingRotations[start + i];
-                    // Each spectator gets their own phase, so a celebrating crowd is
-                    // a boil of individual people rather than one body moving in
-                    // lockstep. §18 of the art direction asks for exactly this.
-                    phases[i] = Hash((start + i) * 2.3f) * Mathf.PI * 2f;
-                }
-
-                _batches.Add(slice);
-                _rest.Add(slice);
-                _positions.Add(positions);
-                _rotations.Add(rotations);
-                _phases.Add(phases);
-                _batchMesh.Add(meshIndex);
-                _blocks.Add(block);
-                _colours.Add(colours);
+                _batches.Add(batch);
             }
+        }
+
+        /// <summary>A tinted material per group. Nine of them, made once.</summary>
+        private static Material BucketMaterial(int bucket, Color home, Color away)
+        {
+            int family = bucket / 3;
+            int value = bucket % 3;
+
+            Color baseColour = family switch
+            {
+                0 => home,
+                1 => away,
+                _ => new Color(0.42f, 0.46f, 0.52f)
+            };
+
+            // Kept dark. These are unlit-ish figures 30 m away in a night stadium;
+            // at full value they glow brighter than the pitch and the eye reads the
+            // stands rather than the goal.
+            float scale = 0.32f + value * 0.22f;
+
+            var material = new Material(ShaderLibrary.Lit) { color = baseColour * scale };
+            ShaderLibrary.SetSmoothness(material, 0.15f);
+            material.enableInstancing = true;
+            return material;
         }
 
         public void SetMood(CrowdMood mood) => _mood = mood;
@@ -206,7 +209,7 @@ namespace CyberGoal.Unity.Environment
             float target = _mood switch
             {
                 CrowdMood.Idle => 0.12f,
-                CrowdMood.Tension => 0.3f,
+                CrowdMood.Tension => 0.30f,
                 CrowdMood.Save => 0.75f,
                 CrowdMood.Goal => 1f,
                 _ => 1f
@@ -216,10 +219,10 @@ namespace CyberGoal.Unity.Environment
 
             Animate();
 
-            for (int i = 0; i < _batches.Count; i++)
+            foreach (Batch batch in _batches)
             {
                 Graphics.DrawMeshInstanced(
-                    _meshes[_batchMesh[i]], 0, _material, _batches[i], _batches[i].Length, _blocks[i]);
+                    batch.Mesh, 0, batch.Material, batch.Matrices, batch.Matrices.Length);
             }
         }
 
@@ -240,32 +243,24 @@ namespace CyberGoal.Unity.Environment
         /// sinking below the seat on the down phase and appearing to stand in a
         /// hole.
         /// </para>
-        /// <para>
-        /// Rebuilding matrices every frame for a few thousand instances is a few
-        /// hundred microseconds and avoids a skinned mesh per spectator, which is
-        /// the version of this that does not run on a phone.
-        /// </para>
         /// </remarks>
         private void Animate()
         {
+            // Below this the crowd is at rest and the matrices already hold the
+            // resting pose, so rebuilding thousands of them would buy nothing.
             if (_moodBlend <= 0.13f) return;
 
             float amplitude = Mathf.SmoothStep(0f, 0.42f, _moodBlend);
             float tempo = 3.2f + _moodBlend * 5.5f;
 
-            for (int b = 0; b < _batches.Count; b++)
+            foreach (Batch batch in _batches)
             {
-                Matrix4x4[] target = _batches[b];
-                Vector3[] positions = _positions[b];
-                Quaternion[] rotations = _rotations[b];
-                float[] phases = _phases[b];
-
-                for (int i = 0; i < target.Length; i++)
+                for (int i = 0; i < batch.Matrices.Length; i++)
                 {
-                    float bounce = Mathf.Abs(Mathf.Sin(_clock * tempo + phases[i])) * amplitude;
-                    Vector3 p = positions[i];
-                    target[i] = Matrix4x4.TRS(
-                        new Vector3(p.x, p.y + bounce, p.z), rotations[i], Vector3.one);
+                    float bounce = Mathf.Abs(Mathf.Sin(_clock * tempo + batch.Phases[i])) * amplitude;
+                    Vector3 p = batch.Rest[i];
+                    batch.Matrices[i] = Matrix4x4.TRS(
+                        new Vector3(p.x, p.y + bounce, p.z), batch.Rotations[i], Vector3.one);
                 }
             }
         }
@@ -288,18 +283,16 @@ namespace CyberGoal.Unity.Environment
             float g = shape.Girth;
             float h = shape.Height;
 
-            // Torso: a tapered elliptical box from hip to shoulder.
             Box(vertices, normals, triangles,
                 new Vector3(0f, 0.30f * h, 0f),
                 new Vector3(0.20f * g, 0.30f * h, 0.13f * g));
 
-            // Head, sat on a short neck.
             Box(vertices, normals, triangles,
                 new Vector3(0f, 0.68f * h, 0f),
                 new Vector3(0.088f, 0.105f, 0.092f));
 
-            // Arms. Variants alternate between resting and raised, so a still crowd
-            // still has silhouette variety.
+            // Variants alternate between resting and raised arms, so even a still
+            // crowd has silhouette variety.
             bool raised = variant % 2 == 1;
             float armY = raised ? 0.62f * h : 0.34f * h;
             float armOut = raised ? 0.30f : 0.24f;
@@ -318,6 +311,15 @@ namespace CyberGoal.Unity.Environment
             return mesh;
         }
 
+        /// <summary>
+        /// An axis-aligned box.
+        /// </summary>
+        /// <remarks>
+        /// Wound so that <c>Cross(b-a, c-a)</c> points outward for every face,
+        /// which is Unity's front-facing rule. Getting this backwards produces a
+        /// figure that is culled from the outside and visible from within — and it
+        /// looks like a modelling error rather than a winding one.
+        /// </remarks>
         private static void Box(List<Vector3> vertices, List<Vector3> normals, List<int> triangles,
             Vector3 centre, Vector3 half)
         {
@@ -335,12 +337,12 @@ namespace CyberGoal.Unity.Environment
 
             int[] faces =
             {
-                0,2,1, 0,3,2,
-                4,5,6, 4,6,7,
-                0,1,5, 0,5,4,
-                3,7,6, 3,6,2,
-                0,4,7, 0,7,3,
-                1,2,6, 1,6,5
+                0,2,1, 0,3,2,   // -Z
+                4,5,6, 4,6,7,   // +Z
+                0,1,5, 0,5,4,   // -Y
+                3,7,6, 3,6,2,   // +Y
+                0,4,7, 0,7,3,   // -X
+                1,2,6, 1,6,5    // +X
             };
             foreach (int i in faces) triangles.Add(b + i);
         }

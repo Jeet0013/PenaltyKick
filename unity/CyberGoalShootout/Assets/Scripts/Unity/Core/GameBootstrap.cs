@@ -44,6 +44,8 @@ namespace CyberGoal.Unity.Core
         private BallView _ball;
         private QualityController _quality;
         private StadiumBlockout _stadium;
+        private CameraFlashes _flashes;
+        private CheerleaderSquad _squad;
 
         private Team _home;
         private Team _away;
@@ -87,6 +89,19 @@ namespace CyberGoal.Unity.Core
             _stadium.homeNeon = ToColor(_home.Neon);
             _stadium.awayNeon = ToColor(_away.Neon);
             _stadium.Build(_quality.Preset);
+
+            // Camera flashes and the cheer squad are cosmetic and scale with the
+            // quality tier: a low-end device gets a trickle rather than none, so
+            // the stadium still reads as alive.
+            var flashesGo = new GameObject("CameraFlashes");
+            flashesGo.transform.SetParent(stadiumGo.transform, false);
+            _flashes = flashesGo.AddComponent<CameraFlashes>();
+            _flashes.Build(Mathf.Max(80, _quality.Preset.CrowdCount / 6));
+
+            var squadGo = new GameObject("Cheerleaders");
+            squadGo.transform.SetParent(stadiumGo.transform, false);
+            _squad = squadGo.AddComponent<CheerleaderSquad>();
+            _squad.Build(_quality.Tier == QualityTier.Low ? 6 : 12, ToColor(_home.Neon));
 
             var cameraGo = new GameObject("MainCamera");
             cameraGo.tag = "MainCamera";
@@ -228,9 +243,27 @@ namespace CyberGoal.Unity.Core
             }
         }
 
+        /// <summary>
+        /// Drive every stadium reaction from one place.
+        /// </summary>
+        /// <remarks>
+        /// The crowd, the flashes and the squad all read the same mood, so they
+        /// cannot disagree about whether something exciting just happened — which
+        /// is what a cheering crowd over a dead bank of flashes would look like.
+        /// </remarks>
         private void SetCrowdMood(CrowdMood mood)
         {
+            float intensity = mood switch
+            {
+                CrowdMood.Idle => 0.08f,
+                CrowdMood.Tension => 0.22f,
+                CrowdMood.Save => 0.7f,
+                _ => 1f
+            };
+
             if (_stadium != null && _stadium.Crowd != null) _stadium.Crowd.SetMood(mood);
+            if (_flashes != null) _flashes.SetIntensity(intensity);
+            if (_squad != null) _squad.SetIntensity(intensity);
         }
 
         private void OnKickResolved(KickAttempt attempt)

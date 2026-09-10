@@ -14,7 +14,11 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="UnityStubs.cs" />
+    <!--
+      Glob rather than one named file, so concurrent work can add stubs in
+      separate files (UnityStubs*.cs) without two authors editing the same one.
+    -->
+    <Compile Include="UnityStubs*.cs" />
     <Compile Include="../../unity/CyberGoalShootout/Assets/Scripts/Unity/**/*.cs" />
   </ItemGroup>
 

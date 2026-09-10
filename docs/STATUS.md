@@ -68,12 +68,16 @@ Support, open `unity/CyberGoalShootout`, press Play. No scene setup is needed �
 
 | Feature | Status | Notes |
 |---|---|---|
-| Striker / keeper / referee bodies | **PLACEHOLDER** | Capsules with correct 1.82 m proportions. §21 forbids shipping this |
-| Rigged humanoids (§2, §23) | **NOT IMPLEMENTED** | Needs MakeHuman — `docs/CHARACTER-PIPELINE.md`. Owner task |
-| Character animation (§16, §17) | **PLACEHOLDER** | Procedural pivot poses; the swap point is `CharacterVisual` |
-| Crowd (§19, §48) | **PLACEHOLDER** | Instanced quads, seated in rows. Not human figures |
-| Crowd LOD tiers (§7 art) | **NOT IMPLEMENTED** | One tier only |
-| Crowd reaction states (§19) | **NOT IMPLEMENTED** | |
+| Striker / keeper / referee bodies | **PARTIAL** | Generated skinned humanoids on a 20-bone rig, 2,573 verts each. Faces, hair, hands, kit zones. Not scanned art |
+| Rigged humanoids (§2, §23) | **PARTIAL** | Rig and proportions are real; no scanned detail. MakeHuman still the intended path |
+| Character animation (§16, §17) | **PLACEHOLDER** | Procedural bone poses; the swap point is `CharacterVisual` |
+| Crowd (§19, §48) | **PARTIAL** | Instanced low-poly seated humanoids, 4 silhouettes, 9 tint groups |
+| Crowd reaction states (§19) | **WORKING** | Idle / tension / goal / save / victory, driven from match state |
+| Crowd celebration (§19, §22) | **WORKING** | Rectified per-instance jump on a goal |
+| Camera flashes (§20) | **WORKING** | Spawn-pool, additive, rate scales with mood |
+| Cheerleaders | **WORKING** | 12 performers, beat-driven routine, pom-poms |
+| Crowd LOD tiers (§7 art) | **NOT IMPLEMENTED** | One tier; density scales with quality |
+| Vertex-colour kit shader | **PARTIAL** | `CharacterKit.shader` written, never compiled by Unity |
 | Pitch markings | **WORKING** | Regulation box, arc, spot — the main scale cue |
 | Neon / holograms (§20) | **PARTIAL** | Emissive trim only |
 
@@ -100,6 +104,19 @@ goal celebration sequence (§22), menus, team select screen (§32 data exists),
 local two-player (§5), tournament (§38), ranking (§39), online multiplayer
 (§40), cosmetics (§36), player attributes (§34).
 
+## The winding bug, as a warning about what typechecking cannot see
+
+The generated character meshes were wound inside-out — every lofted limb and the
+head — for as long as they existed. They typechecked perfectly the whole time.
+With back-face culling that renders a figure hollow: you see the inside of the
+far surface, and it looks like a modelling error rather than an index-order one.
+
+It was caught by one agent reading another's code, then confirmed numerically
+against Unity's documented rule (`front normal = Cross(b-a, c-a)`), not by any
+compiler. Treat every visual claim in this document accordingly: the geometry is
+verified structurally — bone weights sum to 1, the sole sits at y = 0, triangles
+face outward — and **nothing here has been rendered.**
+
 ## Known gaps worth naming
 
 1. **No `.unity` scene file.** Deliberate: hand-written scene YAML is GUID-laden
@@ -113,6 +130,11 @@ local two-player (§5), tournament (§38), ranking (§39), online multiplayer
    Revisit for gamepad support (§5).
 4. **Quality tiers are applied but unmeasured.** §46's frame targets cannot be
    confirmed without a device.
-5. **`QualityController` computes a render scale it never applies.** It needs
+5. **Kit colours depend on an uncompiled shader.** `CharacterKit.shader` is
+   hand-written and has never been through Unity's compiler. If it fails,
+   `ShaderLibrary.CharacterKit` logs a warning and falls back to URP/Lit, which
+   ignores vertex colour — characters would then be one flat colour rather than
+   magenta. Loud on purpose.
+6. **`QualityController` computes a render scale it never applies.** It needs
    the URP asset's `renderScale`, which requires a URP asset to exist — one is
    created by the editor on first open.

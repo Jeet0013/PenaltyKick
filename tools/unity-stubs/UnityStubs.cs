@@ -63,6 +63,7 @@ namespace UnityEngine
         public static Vector3 operator +(Vector3 a, Vector3 b) => new Vector3(a.x + b.x, a.y + b.y, a.z + b.z);
         public static Vector3 operator -(Vector3 a, Vector3 b) => new Vector3(a.x - b.x, a.y - b.y, a.z - b.z);
         public static Vector3 operator *(Vector3 a, float s) => new Vector3(a.x * s, a.y * s, a.z * s);
+        public static Vector3 operator -(Vector3 a) => new Vector3(-a.x, -a.y, -a.z);
         // Unity provides this implicit narrowing, which is what makes
         // `Vector2 p = Input.mousePosition;` legal.
         public static implicit operator Vector2(Vector3 v) => new Vector2(v.x, v.y);
@@ -73,6 +74,7 @@ namespace UnityEngine
         public static Quaternion identity => default;
         public static Quaternion Euler(float x, float y, float z) => default;
         public static Quaternion LookRotation(Vector3 forward, Vector3 up) => default;
+        public static Vector3 operator *(Quaternion q, Vector3 v) => v;
     }
 
     public struct Matrix4x4
@@ -106,6 +108,7 @@ namespace UnityEngine
         public Color(float r, float g, float b, float a) { this.r = r; this.g = g; this.b = b; this.a = a; }
         public static Color white => new Color(1, 1, 1);
         public static Color operator *(Color c, float s) => new Color(c.r * s, c.g * s, c.b * s, c.a);
+        public static Color Lerp(Color a, Color b, float t) => a;
     }
 
     public struct Color32
@@ -279,8 +282,10 @@ namespace UnityEngine
 
     public static class Graphics
     {
+        // The property block is optional in Unity; making it required here
+        // rejected the overload the crowd actually uses.
         public static void DrawMeshInstanced(Mesh mesh, int submesh, Material material,
-            Matrix4x4[] matrices, int count, MaterialPropertyBlock block) { }
+            Matrix4x4[] matrices, int count, MaterialPropertyBlock block = null) { }
     }
 
     public class Component : Object
@@ -305,6 +310,7 @@ namespace UnityEngine
         public Quaternion rotation { get; set; }
         public Quaternion localRotation { get; set; }
         public Vector3 up { get; set; }
+        public Vector3 forward { get; set; }
         public int childCount => 0;
         public Transform GetChild(int i) => null;
         public void SetParent(Transform p, bool worldPositionStays) { }
@@ -386,6 +392,7 @@ namespace UnityEngine
 
     public class Camera : Behaviour
     {
+        public static Camera main => null;
         public float fieldOfView { get; set; }
         public float nearClipPlane { get; set; }
         public float farClipPlane { get; set; }

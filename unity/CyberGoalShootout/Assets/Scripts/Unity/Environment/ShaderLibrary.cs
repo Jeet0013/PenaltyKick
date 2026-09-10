@@ -28,6 +28,8 @@ namespace CyberGoal.Unity.Environment
     {
         private static Shader _lit;
         private static Shader _unlit;
+        private static Shader _characterKit;
+        private static bool _warnedAboutKit;
 
         /// <summary>True when a scriptable render pipeline (URP) is actually driving rendering.</summary>
         public static bool UsingScriptablePipeline => GraphicsSettings.currentRenderPipeline != null;
@@ -64,6 +66,45 @@ namespace CyberGoal.Unity.Environment
                          ?? Shader.Find("Sprites/Default")
                          ?? Lit;
                 return _unlit;
+            }
+        }
+
+        /// <summary>
+        /// The vertex-coloured character shader, or the plain lit one if missing.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// <c>Assets/Shaders/CharacterKit.shader</c> is the only shader in the
+        /// project that reads the mesh's vertex-colour channel, and the character
+        /// mesh bakes its entire kit into that channel — shirt, shorts, socks,
+        /// boots, skin, hair, eyes and trim. Fall back to URP/Lit and every one of
+        /// those becomes a single flat colour, with no error to explain it.
+        /// </para>
+        /// <para>
+        /// So the fallback is loud. A missing shader here is a real problem worth
+        /// a warning, unlike most <c>Shader.Find</c> misses which are cosmetic.
+        /// </para>
+        /// </remarks>
+        public static Shader CharacterKit
+        {
+            get
+            {
+                if (_characterKit != null) return _characterKit;
+
+                _characterKit = Shader.Find("CyberGoal/CharacterKit");
+                if (_characterKit == null)
+                {
+                    if (!_warnedAboutKit)
+                    {
+                        _warnedAboutKit = true;
+                        Debug.LogWarning(
+                            "[CyberGoal] CyberGoal/CharacterKit not found. Characters will render "
+                            + "in a single flat colour because vertex colours are ignored by "
+                            + "URP/Lit. Check Assets/Shaders/CharacterKit.shader compiled.");
+                    }
+                    _characterKit = Lit;
+                }
+                return _characterKit;
             }
         }
 
