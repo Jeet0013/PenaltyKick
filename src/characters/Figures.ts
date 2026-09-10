@@ -14,13 +14,34 @@ import * as THREE from 'three';
 import { FIELD, type Vec3 } from '../game/BallPhysics';
 import type { DiveDirection } from '../game/Goalkeeper';
 
-/** A jointed figure: torso, head, two arms, two legs. */
+/**
+ * A jointed figure: torso, head, two arms, two legs.
+ *
+ * ## Proportions are load-bearing
+ *
+ * The first version had a 0.54 m leg whose top overlapped the torso and whose
+ * foot stopped 28 cm above the turf, so every figure read as a capsule
+ * hovering over the pitch. Nothing about the animation could fix that. The
+ * numbers below build a 1.82 m person: hips at 0.92, shoulders at 1.52, eyes
+ * just under 1.7 — and the feet reach the ground.
+ *
+ * ## Limbs rotate about joints, not about their middles
+ *
+ * A capsule rotated about its own centre scissors through the torso and swings
+ * its shoulder end backwards. Each limb therefore lives in a pivot `Group`
+ * placed at the joint, with the mesh hung half its length below. Rotating the
+ * pivot swings the limb from the shoulder or hip, which is the only way a
+ * stride or a dive reads as one.
+ */
+const HIP_Y = 0.92;
+const SHOULDER_Y = 1.52;
+
 class Figure {
   readonly group = new THREE.Group();
   readonly #torso: THREE.Mesh;
   readonly #head: THREE.Mesh;
-  readonly #arms: [THREE.Mesh, THREE.Mesh];
-  readonly #legs: [THREE.Mesh, THREE.Mesh];
+  readonly #arms: [THREE.Group, THREE.Group];
+  readonly #legs: [THREE.Group, THREE.Group];
   readonly #disposables: Array<{ dispose(): void }> = [];
 
   constructor(kit: THREE.ColorRepresentation, accent: THREE.ColorRepresentation) {
@@ -38,33 +59,50 @@ class Figure {
       emissiveIntensity: 0.55,
       roughness: 0.5,
     });
-    this.#disposables.push(skin, cloth, trim);
+    const boot = new THREE.MeshStandardMaterial({ color: 0x11141b, roughness: 0.45, metalness: 0.3 });
+    this.#disposables.push(skin, cloth, trim, boot);
 
-    const torsoGeo = new THREE.CapsuleGeometry(0.19, 0.44, 6, 12);
-    const headGeo = new THREE.SphereGeometry(0.13, 16, 12);
-    const limbGeo = new THREE.CapsuleGeometry(0.062, 0.42, 4, 8);
-    this.#disposables.push(torsoGeo, headGeo, limbGeo);
+    // Torso spans hip to shoulder, plus a neck: 0.92 to 1.62.
+    const torsoGeo = new THREE.CapsuleGeometry(0.155, 0.4, 6, 12);
+    const headGeo = new THREE.SphereGeometry(0.115, 16, 12);
+    const armGeo = new THREE.CapsuleGeometry(0.052, 0.53, 4, 8);
+    const legGeo = new THREE.CapsuleGeometry(0.072, 0.775, 4, 8);
+    const bootGeo = new THREE.BoxGeometry(0.11, 0.06, 0.24);
+    this.#disposables.push(torsoGeo, headGeo, armGeo, legGeo, bootGeo);
 
     this.#torso = new THREE.Mesh(torsoGeo, cloth);
-    this.#torso.position.y = 1.12;
+    this.#torso.position.y = 1.27;
     this.#torso.castShadow = true;
 
     this.#head = new THREE.Mesh(headGeo, skin);
-    this.#head.position.y = 1.52;
+    this.#head.position.y = 1.7;
     this.#head.castShadow = true;
 
-    this.#arms = [new THREE.Mesh(limbGeo, trim), new THREE.Mesh(limbGeo, trim)];
-    this.#legs = [new THREE.Mesh(limbGeo, cloth), new THREE.Mesh(limbGeo, cloth)];
-
-    for (const [i, arm] of this.#arms.entries()) {
-      arm.position.set(i === 0 ? -0.26 : 0.26, 1.16, 0);
-      arm.castShadow = true;
-      this.group.add(arm);
+    // Arms: pivot at the shoulder, capsule hung 0.317 below it (half of the
+    // 0.634 total length), so the hand ends around 0.89 — mid-thigh, which is
+    // where a hanging hand actually sits.
+    this.#arms = [new THREE.Group(), new THREE.Group()];
+    for (const [i, pivot] of this.#arms.entries()) {
+      pivot.position.set(i === 0 ? -0.2 : 0.2, SHOULDER_Y, 0);
+      const mesh = new THREE.Mesh(armGeo, trim);
+      mesh.position.y = -0.317;
+      mesh.castShadow = true;
+      pivot.add(mesh);
+      this.group.add(pivot);
     }
-    for (const [i, leg] of this.#legs.entries()) {
-      leg.position.set(i === 0 ? -0.1 : 0.1, 0.55, 0);
-      leg.castShadow = true;
-      this.group.add(leg);
+
+    // Legs: pivot at the hip, capsule hung 0.46 below, so the sole lands on 0.
+    this.#legs = [new THREE.Group(), new THREE.Group()];
+    for (const [i, pivot] of this.#legs.entries()) {
+      pivot.position.set(i === 0 ? -0.093 : 0.093, HIP_Y, 0);
+      const mesh = new THREE.Mesh(legGeo, cloth);
+      mesh.position.y = -0.46;
+      mesh.castShadow = true;
+      const shoe = new THREE.Mesh(bootGeo, boot);
+      shoe.position.set(0, -0.89, 0.05);
+      shoe.castShadow = true;
+      pivot.add(mesh, shoe);
+      this.group.add(pivot);
     }
 
     this.group.add(this.#torso, this.#head);
@@ -73,10 +111,16 @@ class Figure {
   /** Idle breathing, so a waiting figure is not a statue. */
   breathe(t: number): void {
     this.#torso.scale.y = 1 + Math.sin(t * 1.8) * 0.012;
-    this.#head.position.y = 1.52 + Math.sin(t * 1.8) * 0.006;
+    this.#head.position.y = 1.7 + Math.sin(t * 1.8) * 0.006;
   }
 
-  /** Swing the limbs. Angles in radians; the caller decides what a pose means. */
+  /**
+   * Swing the limbs. Angles in radians; the caller decides what a pose means.
+   *
+   * Arms rotate about Z (out to the sides, which is what a keeper does) and
+   * legs about X (fore and aft, which is what a stride does). Mirrored on the
+   * right so that a positive angle means the same thing on both sides.
+   */
   setLimbs(leftArm: number, rightArm: number, leftLeg: number, rightLeg: number): void {
     this.#arms[0].rotation.z = leftArm;
     this.#arms[1].rotation.z = -rightArm;
@@ -100,7 +144,15 @@ export class Striker {
 
   constructor(kit: THREE.ColorRepresentation, accent: THREE.ColorRepresentation) {
     this.figure = new Figure(kit, accent);
-    this.figure.group.position.set(0.35, 0, 2.2);
+    /*
+     * The run-up mark, chosen against the lens rather than against the pitch.
+     *
+     * At 30 degrees the camera cannot hold both a goal worth aiming at and a
+     * striker standing next to it — anyone close enough to see is close enough
+     * to block. So he waits just outside the left edge and runs into frame,
+     * which is what a broadcast penalty looks like anyway.
+     */
+    this.figure.group.position.set(-1.6, 0, 5.4);
     this.figure.group.rotation.y = Math.PI;
   }
 
@@ -109,7 +161,7 @@ export class Striker {
     const g = this.figure.group;
     // Approaches the ball along a slight diagonal, as a right-footed kicker
     // does — straight-on run-ups look like a machine.
-    g.position.set(0.35 - runUp * 0.35, 0, 2.2 - runUp * 1.9);
+    g.position.set(-1.6 + runUp * 1.95, 0, 5.4 - runUp * 4.95);
 
     const stride = Math.sin(runUp * Math.PI * 3.2);
     this.figure.setLimbs(stride * 0.5, -stride * 0.5, stride * 0.9, -stride * 0.9);
@@ -197,7 +249,9 @@ export class Referee {
 
   constructor() {
     this.#figure = new Figure(0x14161c, 0xffd23f);
-    this.#figure.group.position.set(-5.4, 0, -3.2);
+    // Out by the edge of the box. At -5.4 he clipped the left edge of the
+    // 30-degree lens and read as an object stuck to the camera.
+    this.#figure.group.position.set(-8.2, 0, -5.6);
     this.#figure.group.rotation.y = Math.PI * 0.72;
     this.group.add(this.#figure.group);
   }

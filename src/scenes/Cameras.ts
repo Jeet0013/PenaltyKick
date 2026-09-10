@@ -38,8 +38,17 @@ export class Cameras {
   readonly #lookAt = new THREE.Vector3();
 
   constructor(aspect: number) {
-    this.camera = new THREE.PerspectiveCamera(52, aspect, 0.1, 400);
-    this.#position.set(0, 1.6, 3.5);
+    /*
+     * A 30 degree lens, not the 50-ish a game engine defaults to.
+     *
+     * The goal is 11 m from the spot and 7.32 m wide. On a wide lens that is a
+     * postcard at the far end of an empty field: at 44 degrees it measured 26%
+     * of frame width, which is not enough to aim at. Broadcast penalties are
+     * shot long for exactly this reason — the compression is what makes the
+     * goal look like something you could hit. At 30 it fills about 36%.
+     */
+    this.camera = new THREE.PerspectiveCamera(30, aspect, 0.1, 400);
+    this.#position.set(0.6, 1.15, 7.6);
     this.#target.copy(GOAL_CENTRE);
     this.camera.position.copy(this.#position);
     this.camera.lookAt(this.#target);
@@ -76,9 +85,29 @@ export class Cameras {
   update(delta: number, ball: Vec3 | null, runUp = 0): void {
     switch (this.#shot) {
       case CameraShot.Striker:
-        // Eases forward during the run-up: 3.5 m back settling toward 2.9.
-        this.#desired.set(0, 1.6 - runUp * 0.12, 3.5 - runUp * 0.6);
-        this.#lookAt.copy(GOAL_CENTRE);
+        /*
+         * 7.6 m back and 1.65 m up, not the spec's 3.5 and 1.6.
+         *
+         * The spec measures from the ball. Taken literally that puts the lens
+         * 1.3 m behind a 1.82 m striker, who then fills the frame and hides the
+         * thing being aimed at — the first build did exactly this. The intent
+         * behind the numbers is "behind the kicker, facing the goal", and
+         * honouring the intent means standing behind the *player*, not behind
+         * the spot.
+         *
+         * The height is deliberately low — below head height. A camera at 2.6 m
+         * looked down on the pitch and flattened the goal into a floor marking.
+         * Dropping to 1.15 m puts the crossbar well above the horizon, which is
+         * what makes the top corners feel reachable, and it lifts the ball far
+         * enough up the frame to clear the stance buttons. At 1.65 m the ball
+         * sat at 83% of frame height and the controls covered it.
+         *
+         * Pulls back and lifts slightly through the run-up rather than pushing
+         * in: the striker is closing on the ball, and a camera closing with him
+         * doubles the apparent speed into something unreadable.
+         */
+        this.#desired.set(0.6, 1.15 + runUp * 0.35, 7.6 + runUp * 0.85);
+        this.#lookAt.set(0, 1.35, -FIELD.spotToGoal);
         break;
 
       case CameraShot.Keeper:

@@ -28,7 +28,14 @@ export class Lighting {
      * maps. One key light standing in for the bank that matters, plus a cool
      * rim from behind the goal, reads the same and costs one.
      */
-    this.#key = new THREE.DirectionalLight(0xdff2ff, 2.6);
+    /*
+     * Warm white, not the blue-white it started as.
+     *
+     * Stadium floods are metal-halide and read slightly warm on grass. A
+     * 0xdff2ff key at 2.6 pushed every green channel past the red and left the
+     * pitch cyan — the base colour was never the problem, the light was.
+     */
+    this.#key = new THREE.DirectionalLight(0xfff2dc, 2.15);
     this.#key.position.set(9, 17, 6);
     this.#key.target.position.set(0, 0, -FIELD.spotToGoal);
     this.#key.castShadow = preset.shadows;
@@ -54,10 +61,23 @@ export class Lighting {
 
     // Cyan from behind the goal: separates the frame and the keeper from the
     // dark stands, which is what stops the silhouette getting lost.
-    this.#rim = new THREE.DirectionalLight(0x2ad4f5, 0.85);
-    this.#rim.position.set(-6, 5, -FIELD.spotToGoal - 12);
+    /*
+     * 0.28, down from 0.85 via 0.5.
+     *
+     * A directional light's specular lobe on a big flat plane is a pool, not a
+     * point, and at 0.5 the rim's pool covered the whole middle of the pitch in
+     * cyan — the single thing that made it read as water. It only ever needed
+     * to catch the goal frame and the keeper's shoulders.
+     */
+    this.#rim = new THREE.DirectionalLight(0x2ad4f5, 0.28);
+    // High as well as behind. From 5 m up its specular pool landed in the
+    // middle of the penalty area; from 15 m it lands beyond the goal, where
+    // there is nothing to tint.
+    this.#rim.position.set(-6, 15, -FIELD.spotToGoal - 12);
 
-    const ambient = new THREE.AmbientLight(0x24405a, preset.environment ? 0.22 : 0.75);
+    // Cool fill, but much less of it: the blue ambient was tinting the shadow
+    // side of everything, which is half of why the pitch went cyan.
+    const ambient = new THREE.AmbientLight(0x1c2a38, preset.environment ? 0.18 : 0.7);
 
     this.group.add(this.#key, this.#key.target, this.#rim, ambient);
   }
@@ -80,7 +100,9 @@ export class Lighting {
 
     const shell = new THREE.Mesh(
       new THREE.BoxGeometry(60, 34, 60),
-      new THREE.MeshStandardMaterial({ color: 0x0a1020, side: THREE.BackSide, roughness: 1 }),
+      // Neutral dark rather than dark blue: the shell is the ambient term for
+      // every material in the scene, and a blue one tints all of them.
+      new THREE.MeshStandardMaterial({ color: 0x10141c, side: THREE.BackSide, roughness: 1 }),
     );
     room.add(shell);
 
@@ -96,15 +118,15 @@ export class Lighting {
     };
 
     // The floodlight bank, where the key light is.
-    panel(26, 26, 0xdff2ff, 11, new THREE.Vector3(6, 16.6, 4), new THREE.Euler(Math.PI / 2, 0, 0));
+    panel(26, 26, 0xfff2dc, 5.0, new THREE.Vector3(6, 16.6, 4), new THREE.Euler(Math.PI / 2, 0, 0));
     // Cyan wash from behind the goal, matching the rim.
-    panel(30, 8, 0x2ad4f5, 3.2, new THREE.Vector3(0, 5, -28), new THREE.Euler(0, 0, 0));
+    panel(18, 5, 0x2ad4f5, 1.0, new THREE.Vector3(0, 5, -28), new THREE.Euler(0, 0, 0));
     // Warm city bounce from the opposite side.
     panel(30, 6, 0xff9a5c, 1.4, new THREE.Vector3(0, 3, 28), new THREE.Euler(0, Math.PI, 0));
 
     const target = pmrem.fromScene(room, 0.035);
     scene.environment = target.texture;
-    scene.environmentIntensity = 0.55;
+    scene.environmentIntensity = 0.24;
     this.#environment = target.texture;
 
     room.traverse((node) => {

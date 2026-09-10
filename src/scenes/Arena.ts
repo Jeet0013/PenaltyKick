@@ -48,6 +48,7 @@ export class Arena {
 
     this.group.add(
       this.#turf(preset.turfSegments),
+      this.#markings(),
       this.#goal(),
       this.#net(),
       this.#stands(),
@@ -69,15 +70,24 @@ export class Arena {
     geometry.rotateX(-Math.PI / 2);
 
     const material = new THREE.MeshPhysicalMaterial({
-      color: 0x0d2a1c,
+      // Deep pitch green. It was reading teal: a strong cyan rim plus a cyan
+      // environment tints a dark surface toward whatever is lighting it, so
+      // the base colour has to carry more green than looks right on its own.
+      color: 0x1a4a24,
       map: this.#track(),
       roughnessMap: this.#wetness(),
-      roughness: 0.62,
-      metalness: 0.02,
-      // A wet pitch is a mirror at grazing angles and matte underfoot, which is
-      // exactly what a clearcoat with high roughness does.
-      clearcoat: 0.55,
-      clearcoatRoughness: 0.38,
+      roughness: 0.94,
+      metalness: 0.0,
+      /*
+       * A wet pitch is a mirror at grazing angles and matte underfoot, which is
+       * what a clearcoat with high roughness does. But the environment bake
+       * puts a 26 m emissive panel overhead, and at clearcoat 0.55 the pitch
+       * mirrored it as a white river down the middle of the penalty area that
+       * swamped the green entirely. 0.05 with a rough coat keeps a hint of
+       * sheen and loses the mirror.
+       */
+      clearcoat: 0.05,
+      clearcoatRoughness: 0.85,
     });
 
     const mesh = new THREE.Mesh(geometry, material);
@@ -88,19 +98,151 @@ export class Arena {
     return mesh;
   }
 
+
+  /**
+   * Pitch markings, as a decal above the turf.
+   *
+   * The most valuable 60 lines in this file. Without them the pitch is a green
+   * field with a goal on it and the eye has nothing to measure against — the
+   * goal could be any size, at any distance. The six-yard box and the penalty
+   * arc converging toward the goal line are what give the shot its depth, and
+   * they are the reason a player can judge whether a keeper is off his line.
+   *
+   * Regulation, in metres, measured from a spot at the origin 11 m out:
+   *
+   * | marking          | distance from goal line | half-width |
+   * |------------------|-------------------------|------------|
+   * | goal area        | 5.5                     | 9.16       |
+   * | penalty area     | 16.5                    | 20.16      |
+   * | penalty arc      | radius 9.15 about the spot          |
+   *
+   * A decal rather than paint in the turf's own colour map, because that map
+   * tiles 6x8 and a tiled penalty area would give the pitch six penalty spots.
+   */
+  #markings(): THREE.Mesh {
+    // The strip the camera can actually see: 60 m across, from 3 m behind the
+    // goal line to 10 m behind the spot.
+    const worldWidth = 60;
+    const worldDepth = 24;
+    const zNear = 10;
+    const zFar = -14;
+
+    const w = 2048;
+    const h = Math.round((w * worldDepth) / worldWidth);
+    const ctx = canvas(w);
+    ctx.canvas.height = h;
+    ctx.clearRect(0, 0, w, h);
+
+    const px = (x: number) => ((x + worldWidth / 2) / worldWidth) * w;
+    /*
+     * Canvas row 0 is the *far* edge, not the near one.
+     *
+     * A PlaneGeometry rotated -90 degrees about X maps its +Y to world -Z, and
+     * `flipY` puts the image's top row at +Y. So the top of this canvas is
+     * z = zFar, behind the goal. Getting this backwards paints the penalty arc
+     * on the wrong side of the spot, which looks almost right and is not.
+     */
+    const py = (z: number) => ((z - zFar) / worldDepth) * h;
+    // 12 cm of paint, the real width — thinner reads as a scratch, thicker as
+    // a road marking.
+    const lineWidth = (0.12 / worldWidth) * w;
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.82)';
+    ctx.lineWidth = lineWidth;
+    ctx.lineCap = 'butt';
+
+    const goalLine = -FIELD.spotToGoal;
+    const box = (fromGoalLine: number, halfWidth: number) => {
+      const z = goalLine + fromGoalLine;
+      ctx.beginPath();
+      ctx.moveTo(px(-halfWidth), py(goalLine));
+      ctx.lineTo(px(-halfWidth), py(z));
+      ctx.lineTo(px(halfWidth), py(z));
+      ctx.lineTo(px(halfWidth), py(goalLine));
+      ctx.stroke();
+    };
+
+    // Goal line, running the full width.
+    ctx.beginPath();
+    ctx.moveTo(0, py(goalLine));
+    ctx.lineTo(w, py(goalLine));
+    ctx.stroke();
+
+    box(5.5, 9.16);
+    box(16.5, 20.16);
+
+    /*
+     * The penalty arc: a 9.15 m circle about the spot, clipped to the part
+     * outside the penalty area. Drawing the whole circle is a common mistake
+     * and instantly wrong to anyone who has stood on a pitch.
+     */
+    const arcR = (9.15 / worldWidth) * w;
+    const boxEdgeZ = goalLine + 16.5;
+    // Half-angle from the spot at which the circle crosses the box edge.
+    const theta = Math.acos((boxEdgeZ - 0) / 9.15);
+    // Canvas angles run clockwise because canvas y points down; +PI/2 is
+    // therefore world +z, away from the goal, which is the half we want.
+    ctx.beginPath();
+    ctx.arc(px(0), py(0), arcR, Math.PI / 2 - theta, Math.PI / 2 + theta);
+    ctx.stroke();
+
+    // The penalty spot: a filled disc, not a ring, and 22 cm across — the same
+    // width as the ball that sits on it. At twice that it read as a puddle.
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    ctx.beginPath();
+    ctx.arc(px(0), py(0), (0.11 / worldWidth) * w, 0, Math.PI * 2);
+    ctx.fill();
+
+    const texture = new THREE.CanvasTexture(ctx.canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.anisotropy = 16;
+    this.#keep(texture);
+
+    const geometry = new THREE.PlaneGeometry(worldWidth, worldDepth);
+    geometry.rotateX(-Math.PI / 2);
+    const material = new THREE.MeshStandardMaterial({
+      map: texture,
+      transparent: true,
+      roughness: 0.9,
+      // Paint sits on grass, so it takes the same light — but it must never
+      // z-fight with the turf one millimetre below it.
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+      polygonOffsetUnits: -2,
+      depthWrite: false,
+    });
+    this.#keep(geometry, material);
+
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.name = 'Markings';
+    mesh.receiveShadow = true;
+    mesh.position.set(0, 0.006, (zNear + zFar) / 2);
+    return mesh;
+  }
+
   /** Mown stripes and a worn penalty spot, painted rather than modelled. */
   #track(): THREE.CanvasTexture {
     const size = 1024;
     const ctx = canvas(size);
 
-    ctx.fillStyle = '#16341f';
+    /*
+     * Near-neutral, because this map is *multiplied* by the material colour.
+     *
+     * It started at #16341f — the same dark green as `color` — so the two
+     * multiplied out to an albedo of roughly (0.009, 0.059, 0.017): a surface
+     * that reflects almost nothing. The pitch then took its entire visible
+     * value from specular and the cyan environment, which is why it read as
+     * water rather than grass. The map carries the stripes and the blade
+     * noise; the colour carries the hue. Only one of them gets to be dark.
+     */
+    ctx.fillStyle = '#c4c4c4';
     ctx.fillRect(0, 0, size, size);
 
     // Mowing stripes: alternate bands of very slightly different value. Real
     // stripes are the same grass lying in opposite directions, so the
     // difference should be small enough to be felt rather than seen.
     for (let i = 0; i < 16; i += 1) {
-      ctx.fillStyle = i % 2 === 0 ? 'rgba(255,255,255,0.035)' : 'rgba(0,0,0,0.05)';
+      ctx.fillStyle = i % 2 === 0 ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.07)';
       ctx.fillRect(0, (i * size) / 16, size, size / 16);
     }
 
@@ -108,8 +250,8 @@ export class Arena {
     for (let i = 0; i < 9000; i += 1) {
       const x = Math.random() * size;
       const y = Math.random() * size;
-      ctx.fillStyle = `rgba(${Math.random() > 0.5 ? '190,220,190' : '10,30,15'},${
-        0.02 + Math.random() * 0.05
+      ctx.fillStyle = `rgba(${Math.random() > 0.5 ? '235,255,235' : '40,70,45'},${
+        0.03 + Math.random() * 0.06
       })`;
       ctx.fillRect(x, y, 1, 1 + Math.random() * 2);
     }
@@ -127,7 +269,16 @@ export class Arena {
   #wetness(): THREE.CanvasTexture {
     const size = 512;
     const ctx = canvas(size);
-    ctx.fillStyle = '#9a9a9a';
+    /*
+     * Mid-high, and a narrow range around it.
+     *
+     * This map *multiplies* the material's roughness, which is the detail that
+     * broke the first version: a 70/255 texel took a 0.62 material down to
+     * 0.17, and 0.17 is a mirror. Every wet patch reflected the floodlight
+     * panel, and the pitch came out cyan. Wet grass is glossier than dry grass
+     * by a little, not by a factor of four.
+     */
+    ctx.fillStyle = '#dcdcdc';
     ctx.fillRect(0, 0, size, size);
 
     for (let i = 0; i < 140; i += 1) {
@@ -136,7 +287,7 @@ export class Arena {
       const r = size * (0.02 + Math.random() * 0.11);
       const wet = Math.random() > 0.45;
       const g = ctx.createRadialGradient(x, y, 0, x, y, r);
-      const tone = wet ? '70,70,70' : '180,180,180';
+      const tone = wet ? '170,170,170' : '230,230,230';
       g.addColorStop(0, `rgba(${tone},0.55)`);
       g.addColorStop(1, `rgba(${tone},0)`);
       ctx.fillStyle = g;
@@ -274,10 +425,17 @@ export class Arena {
     const stands = new THREE.Group();
     stands.name = 'Stands';
 
+    /*
+     * Lifted off pure black.
+     *
+     * At 0x090c14 the bowl was indistinguishable from the void behind it, so
+     * the crowd cards read as confetti hanging in empty space. A stand only has
+     * to be a few values above the sky to give the crowd something to sit on.
+     */
     const material = new THREE.MeshStandardMaterial({
-      color: 0x090c14,
-      roughness: 0.85,
-      metalness: 0.15,
+      color: 0x1a2029,
+      roughness: 0.9,
+      metalness: 0.1,
     });
     this.#keep(material);
 
@@ -304,7 +462,8 @@ export class Arena {
    * the eye reads stillness as a texture rather than as people.
    */
   #crowd(count: number, palette: ArenaPalette): THREE.InstancedMesh {
-    const geometry = new THREE.PlaneGeometry(0.42, 0.72);
+    // Person-sized at 30 m. They were 0.42 x 0.72 and read as a wall of cards.
+    const geometry = new THREE.PlaneGeometry(0.24, 0.42);
     const material = new THREE.MeshBasicMaterial({
       transparent: true,
       opacity: 0.85,
@@ -320,23 +479,45 @@ export class Arena {
     const away = new THREE.Color(palette.away);
     const dummy = new THREE.Object3D();
 
+    /*
+     * Seated in rows, which the first version was not.
+     *
+     * It walked the angle monotonically while taking the tier from `i % 7`, so
+     * every consecutive spectator jumped to a different height: the bowl came
+     * out as a zig-zag of confetti rather than as a crowd. People sit in rows.
+     * Filling one row at a time, with sub-seat jitter for the irregularity that
+     * stops the rows reading as a grid, is the whole fix.
+     */
+    const rows = 9;
+    const perRow = Math.ceil(count / rows);
+
     for (let i = 0; i < count; i += 1) {
-      const angle = (i / count) * Math.PI * 2;
-      const ring = 30 + (i % 5) * 2.6;
-      const height = 4.5 + (i % 5) * 2.1 + Math.random() * 0.6;
+      const row = Math.floor(i / perRow);
+      const seat = i % perRow;
+      // Half a seat of stagger per row, so the rows interlock the way real
+      // seating does instead of stacking into vertical columns.
+      const angle = ((seat + (row % 2) * 0.5) / perRow) * Math.PI * 2;
+      const jitter = (Math.random() - 0.5) * 0.012;
+
+      const ring = 26.5 + row * 1.9;
+      const height = 3.0 + row * 1.32 + (Math.random() - 0.5) * 0.18;
 
       dummy.position.set(
-        Math.cos(angle) * ring,
+        Math.cos(angle + jitter) * ring,
         height,
-        Math.sin(angle) * ring - FIELD.spotToGoal + 8,
+        Math.sin(angle + jitter) * ring - FIELD.spotToGoal + 8,
       );
       dummy.lookAt(0, 2, -FIELD.spotToGoal);
       dummy.updateMatrix();
       mesh.setMatrixAt(i, dummy.matrix);
 
-      // Split the bowl between the two teams, with a scatter of neutrals.
-      const tint = angle < Math.PI ? home : away;
-      const c = tint.clone().multiplyScalar(0.35 + Math.random() * 0.5);
+      // Split the bowl between the two teams, with a scatter of neutrals so it
+      // is a crowd rather than two solid blocks of colour. Kept dark: these are
+      // unlit cards 30 m away in a night stadium, and at full value they glowed
+      // brighter than the pitch.
+      const neutral = Math.random() < 0.45;
+      const tint = neutral ? new THREE.Color(0x6c7c90) : angle < Math.PI ? home : away;
+      const c = tint.clone().multiplyScalar(0.14 + Math.random() * 0.26);
       mesh.setColorAt(i, c);
     }
     mesh.instanceMatrix.needsUpdate = true;
