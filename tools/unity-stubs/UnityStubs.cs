@@ -27,6 +27,7 @@ namespace UnityEngine
     public struct Vector2
     {
         public float x, y;
+        public static Vector2 Lerp(Vector2 a, Vector2 b, float t) => a;
         public Vector2(float x, float y) { this.x = x; this.y = y; }
         public static Vector2 zero => new Vector2(0, 0);
         public static Vector2 one => new Vector2(1, 1);
@@ -52,6 +53,13 @@ namespace UnityEngine
         public static Vector3 up => new Vector3(0, 1, 0);
         public static Vector3 right => new Vector3(1, 0, 0);
         public static Vector3 Lerp(Vector3 a, Vector3 b, float t) => a;
+        public static Vector3 Scale(Vector3 a, Vector3 b) => a;
+        public static Vector3 Cross(Vector3 a, Vector3 b) => a;
+        public static float Dot(Vector3 a, Vector3 b) => 0;
+        public static Vector3 forward => new Vector3(0, 0, 1);
+        public Vector3 normalized => this;
+        public float sqrMagnitude => 0;
+        public float magnitude => 0;
         public static Vector3 operator +(Vector3 a, Vector3 b) => new Vector3(a.x + b.x, a.y + b.y, a.z + b.z);
         public static Vector3 operator -(Vector3 a, Vector3 b) => new Vector3(a.x - b.x, a.y - b.y, a.z - b.z);
         public static Vector3 operator *(Vector3 a, float s) => new Vector3(a.x * s, a.y * s, a.z * s);
@@ -64,6 +72,31 @@ namespace UnityEngine
     {
         public static Quaternion identity => default;
         public static Quaternion Euler(float x, float y, float z) => default;
+        public static Quaternion LookRotation(Vector3 forward, Vector3 up) => default;
+    }
+
+    public struct Matrix4x4
+    {
+        public static Matrix4x4 identity => default;
+        public static Matrix4x4 TRS(Vector3 pos, Quaternion rot, Vector3 scale) => default;
+        public static Matrix4x4 operator *(Matrix4x4 a, Matrix4x4 b) => a;
+    }
+
+    public struct Bounds
+    {
+        public Bounds(Vector3 centre, Vector3 size) { }
+    }
+
+    public struct BoneWeight
+    {
+        public int boneIndex0, boneIndex1, boneIndex2, boneIndex3;
+        public float weight0, weight1, weight2, weight3;
+    }
+
+    public struct Vector4
+    {
+        public float x, y, z, w;
+        public static implicit operator Vector4(Color c) => default;
     }
 
     public struct Color
@@ -79,6 +112,10 @@ namespace UnityEngine
     {
         public byte r, g, b, a;
         public Color32(byte r, byte g, byte b, byte a) { this.r = r; this.g = g; this.b = b; this.a = a; }
+        // Unity provides both directions implicitly, which is what makes
+        // `Color32[] pixels; pixels[i] = someColor;` legal.
+        public static implicit operator Color32(Color c) => default;
+        public static implicit operator Color(Color32 c) => default;
     }
 
     public struct Rect
@@ -95,11 +132,16 @@ namespace UnityEngine
     public static class Mathf
     {
         public const float PI = 3.14159265f;
+        public static float Floor(float f) => 0;
+        public static float Abs(float f) => f;
+        public static float SmoothStep(float a, float b, float t) => a;
+        public static float Sqrt(float f) => 0;
         public static float Sin(float f) => 0;
         public static float Cos(float f) => 0;
         public static float Acos(float f) => 0;
         public static float Exp(float f) => 0;
         public static float Min(float a, float b) => a;
+        public static int Min(int a, int b) => a;
         public static float Max(float a, float b) => a;
         public static int Max(int a, int b) => a;
         public static float Clamp(float v, float a, float b) => v;
@@ -171,18 +213,20 @@ namespace UnityEngine
     public class Shader : Object
     {
         public static Shader Find(string name) => null;
+        public static int PropertyToID(string name) => 0;
     }
 
     public class Texture : Object { }
 
     public enum TextureFormat { RGBA32 }
-    public enum TextureWrapMode { Clamp }
+    public enum TextureWrapMode { Clamp, Repeat }
 
     public class Texture2D : Texture
     {
         public TextureWrapMode wrapMode { get; set; }
         public int anisoLevel { get; set; }
         public Texture2D(int w, int h, TextureFormat f, bool mips) { }
+        public void SetPixels32(Color32[] p, int mip) { }
         public void SetPixels32(Color32[] p) { }
         public void Apply() { }
     }
@@ -192,20 +236,51 @@ namespace UnityEngine
         public Material(Shader s) { }
         public Color color { get; set; }
         public Texture mainTexture { get; set; }
+        public void SetTexture(string n, Texture t) { }
         public int renderQueue { get; set; }
         public bool HasProperty(string n) => true;
         public void SetFloat(string n, float v) { }
         public void SetInt(string n, int v) { }
         public void SetColor(string n, Color v) { }
         public void EnableKeyword(string k) { }
+        public bool enableInstancing { get; set; }
     }
 
     public class Mesh : Object
     {
         public Vector3[] vertices { get; set; }
+        public Vector3[] normals { get; set; }
         public Vector2[] uv { get; set; }
         public int[] triangles { get; set; }
+        public BoneWeight[] boneWeights { get; set; }
+        public Matrix4x4[] bindposes { get; set; }
+        public void SetVertices(System.Collections.Generic.List<Vector3> v) { }
+        public void SetNormals(System.Collections.Generic.List<Vector3> n) { }
+        public void SetUVs(int channel, System.Collections.Generic.List<Vector2> uvs) { }
+        public void SetTriangles(System.Collections.Generic.List<int> t, int submesh) { }
         public void RecalculateNormals() { }
+        public void RecalculateBounds() { }
+    }
+
+    public class SkinnedMeshRenderer : Renderer
+    {
+        public Mesh sharedMesh { get; set; }
+        public Transform[] bones { get; set; }
+        public Transform rootBone { get; set; }
+        public Bounds localBounds { get; set; }
+    }
+
+    public class MaterialPropertyBlock
+    {
+        public void SetVectorArray(int id, Vector4[] values) { }
+        public void SetColor(int id, Color c) { }
+        public void SetFloat(int id, float f) { }
+    }
+
+    public static class Graphics
+    {
+        public static void DrawMeshInstanced(Mesh mesh, int submesh, Material material,
+            Matrix4x4[] matrices, int count, MaterialPropertyBlock block) { }
     }
 
     public class Component : Object
@@ -222,6 +297,8 @@ namespace UnityEngine
 
     public class Transform : Component
     {
+        public Matrix4x4 worldToLocalMatrix => default;
+        public Matrix4x4 localToWorldMatrix => default;
         public Vector3 position { get; set; }
         public Vector3 localPosition { get; set; }
         public Vector3 localScale { get; set; }

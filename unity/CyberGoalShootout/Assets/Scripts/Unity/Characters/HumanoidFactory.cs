@@ -1,40 +1,31 @@
+using CyberGoal.Unity.Environment;
 using UnityEngine;
 
 namespace CyberGoal.Unity.Characters
 {
     /// <summary>
-    /// Produces the striker, keeper and referee bodies.
+    /// Produces the striker, keeper and referee.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <b>Everything this class builds procedurally is PLACEHOLDER.</b> The art
-    /// direction is unambiguous: §21 forbids shipping capsules, cubes, spheres or
-    /// stick figures as final artwork, and §2 requires hero characters with real
-    /// anatomy, faces, hands and PBR materials. Nothing generated here meets that
-    /// bar and nothing here is intended to.
+    /// Builds a skinned humanoid — a real tapered body on a 20-bone rig — unless a
+    /// rigged prefab is assigned to <see cref="rigged"/>, in which case that is
+    /// used instead and nothing is generated.
     /// </para>
     /// <para>
-    /// What it does instead is make the swap trivial. Assign a rigged humanoid
-    /// prefab to <see cref="rigged"/> and this component instantiates it and never
-    /// builds a primitive again. Every other system — animation, the camera, the
-    /// save resolution — talks to <see cref="CharacterVisual"/>, not to geometry,
-    /// so replacing the model changes this file and nothing else.
-    /// </para>
-    /// <para>
-    /// The proportions are not arbitrary. They describe a 1.82 m adult: hips at
-    /// 0.92, shoulders at 1.52, eyes just under 1.70. The web prototype's first
-    /// attempt used a 0.54 m leg whose foot stopped 28 cm above the turf, and
-    /// every figure read as a capsule hovering over the pitch — no amount of
-    /// animation could fix it. Getting the skeleton right now means a real model
-    /// dropped in later lands at the same scale as the placeholder it replaces,
-    /// and the cameras framed against one frame the other.
+    /// The generated body is a large step up from the capsules it replaces, and it
+    /// is still not final art: no face, no hair, no cloth, no scanned detail. §2
+    /// asks for detailed faces and hands at hero quality, so `docs/STATUS.md`
+    /// keeps listing characters as PLACEHOLDER until a MakeHuman export lands.
+    /// What has changed is that the rig, the proportions and the pose API are now
+    /// the ones a real model will use, so the swap is genuinely one field.
     /// </para>
     /// </remarks>
     public sealed class HumanoidFactory : MonoBehaviour
     {
-        [Header("Real character (leave empty for placeholder)")]
+        [Header("Real character (leave empty to generate one)")]
         [Tooltip("A rigged humanoid prefab. See docs/CHARACTER-PIPELINE.md. " +
-                 "When set, no placeholder geometry is created.")]
+                 "When set, nothing is generated.")]
         public GameObject rigged;
 
         [Header("Kit")]
@@ -42,121 +33,78 @@ namespace CyberGoal.Unity.Characters
         public Color neon = new Color(0.22f, 0.84f, 1f);
         public Color skin = new Color(0.55f, 0.35f, 0.23f);
 
-        /// <summary>Standing height of the body this factory builds, in metres.</summary>
-        public const float Height = 1.82f;
-        public const float HipY = 0.92f;
-        public const float ShoulderY = 1.52f;
+        [Header("Build")]
+        public bool castShadows = true;
 
-        /// <summary>Build the body and return the handle every other system uses.</summary>
+        public static float Height => Skeleton.Height;
+
         public CharacterVisual Create(Transform parent, string label)
+            => Create(parent, label, BodyShape.Striker);
+
+        public CharacterVisual Create(Transform parent, string label, BodyShape shape)
         {
             if (rigged != null)
             {
                 GameObject instance = Instantiate(rigged, parent);
                 instance.name = label;
-                var real = instance.GetComponent<CharacterVisual>();
-                if (real == null) real = instance.AddComponent<CharacterVisual>();
+                CharacterVisual real = instance.GetComponent<CharacterVisual>()
+                                       ?? instance.AddComponent<CharacterVisual>();
                 real.isPlaceholder = false;
                 real.Bind();
                 return real;
             }
 
-            return BuildPlaceholder(parent, label);
+            return BuildSkinned(parent, label, shape);
         }
 
-        /// <summary>
-        /// A jointed stand-in with correct proportions.
-        /// </summary>
-        /// <remarks>
-        /// Limbs hang from pivots at the joint rather than being rotated about
-        /// their own centres. A capsule spun about its middle scissors through the
-        /// torso and swings its shoulder end backwards, which is why the naive
-        /// version of this looks like a broken puppet no matter how good the
-        /// animation curve driving it is.
-        /// </remarks>
-        private CharacterVisual BuildPlaceholder(Transform parent, string label)
+        private CharacterVisual BuildSkinned(Transform parent, string label, BodyShape shape)
         {
             var root = new GameObject(label);
             root.transform.SetParent(parent, false);
 
-            Material cloth = MakeMaterial(primary, 0.72f);
-            Material trim = MakeMaterial(neon, 0.45f, emissive: neon * 0.6f);
-            Material flesh = MakeMaterial(skin, 0.78f);
-            Material boot = MakeMaterial(new Color(0.07f, 0.08f, 0.1f), 0.4f);
+            HumanoidMeshBuilder.Built built = HumanoidMeshBuilder.Build(root.transform, shape, label);
 
-            // Torso: hips to neck.
-            Transform torso = Primitive(PrimitiveType.Capsule, root.transform, "Torso", cloth);
-            torso.localPosition = new Vector3(0, 1.27f, 0);
-            torso.localScale = new Vector3(0.31f, 0.36f, 0.22f);
+            var rendererGo = new GameObject(label + "_Mesh");
+            rendererGo.transform.SetParent(root.transform, false);
 
-            Transform head = Primitive(PrimitiveType.Sphere, root.transform, "Head", flesh);
-            head.localPosition = new Vector3(0, 1.70f, 0);
-            head.localScale = Vector3.one * 0.23f;
+            var skin = rendererGo.AddComponent<SkinnedMeshRenderer>();
+            skin.sharedMesh = built.Mesh;
+            skin.bones = built.Bones;
+            skin.rootBone = built.Root;
+            skin.sharedMaterial = BuildKitMaterial();
+            skin.shadowCastingMode = castShadows
+                ? UnityEngine.Rendering.ShadowCastingMode.On
+                : UnityEngine.Rendering.ShadowCastingMode.Off;
+            // Without this the mesh is culled whenever its origin leaves the
+            // frustum — which for a diving keeper is exactly when you are looking
+            // at it. Generous bounds cost nothing at this object count.
+            skin.localBounds = new Bounds(
+                new Vector3(0f, Skeleton.Height * 0.5f, 0f),
+                new Vector3(3f, Skeleton.Height + 1f, 3f));
 
             var visual = root.AddComponent<CharacterVisual>();
             visual.isPlaceholder = true;
-
-            visual.leftArm = Limb(root.transform, "ArmL", trim, new Vector3(-0.20f, ShoulderY, 0), 0.634f, 0.104f);
-            visual.rightArm = Limb(root.transform, "ArmR", trim, new Vector3(0.20f, ShoulderY, 0), 0.634f, 0.104f);
-            visual.leftLeg = Limb(root.transform, "LegL", cloth, new Vector3(-0.093f, HipY, 0), 0.92f, 0.144f, boot);
-            visual.rightLeg = Limb(root.transform, "LegR", cloth, new Vector3(0.093f, HipY, 0), 0.92f, 0.144f, boot);
-            visual.torso = torso;
-            visual.head = head;
-
+            visual.bones = built.Bones;
             visual.Bind();
             return visual;
         }
 
-        /// <summary>A limb: a pivot at the joint, with the segment hung below it.</summary>
-        private static Transform Limb(Transform parent, string name, Material material,
-            Vector3 joint, float length, float thickness, Material shoeMaterial = null)
+        /// <summary>
+        /// One material for the whole body.
+        /// </summary>
+        /// <remarks>
+        /// A single draw call per character. Splitting skin, kit and boots into
+        /// three materials would triple that for detail that is invisible at
+        /// gameplay distance — and §19 of the art direction is explicit that human
+        /// quality has to be balanced against mobile performance.
+        /// </remarks>
+        private Material BuildKitMaterial()
         {
-            var pivot = new GameObject(name);
-            pivot.transform.SetParent(parent, false);
-            pivot.transform.localPosition = joint;
-
-            Transform segment = Primitive(PrimitiveType.Capsule, pivot.transform, name + "Segment", material);
-            // Unity's capsule is 2 units tall at scale 1, so a scale of length/2
-            // gives the requested length. Hung half its length below the joint so
-            // rotating the pivot swings it from the shoulder or hip.
-            segment.localScale = new Vector3(thickness, length / 2f, thickness);
-            segment.localPosition = new Vector3(0, -length / 2f, 0);
-
-            if (shoeMaterial != null)
-            {
-                Transform shoe = Primitive(PrimitiveType.Cube, pivot.transform, name + "Boot", shoeMaterial);
-                shoe.localScale = new Vector3(0.11f, 0.06f, 0.24f);
-                shoe.localPosition = new Vector3(0, -length + 0.03f, 0.05f);
-            }
-
-            return pivot.transform;
-        }
-
-        private static Transform Primitive(PrimitiveType type, Transform parent, string name, Material material)
-        {
-            GameObject go = GameObject.CreatePrimitive(type);
-            go.name = name;
-            go.transform.SetParent(parent, false);
-
-            // Placeholder bodies never take part in physics: the ball flight and
-            // the save are both resolved analytically in Core, and a stray collider
-            // here would introduce a second, non-deterministic opinion about them.
-            Collider collider = go.GetComponent<Collider>();
-            if (collider != null) Destroy(collider);
-
-            var renderer = go.GetComponent<Renderer>();
-            if (renderer != null) renderer.sharedMaterial = material;
-            return go.transform;
-        }
-
-        private static Material MakeMaterial(Color colour, float roughness, Color? emissive = null)
-        {
-            // Shader choice is ShaderLibrary's problem: asking for a URP shader
-            // when URP is installed but not the active pipeline gives a shader
-            // that is found, used, and drawn magenta.
-            var material = new Material(Environment.ShaderLibrary.Lit) { color = colour };
-            Environment.ShaderLibrary.SetSmoothness(material, 1f - roughness);
-            if (emissive.HasValue) Environment.ShaderLibrary.SetEmission(material, emissive.Value);
+            var material = new Material(ShaderLibrary.Lit) { color = primary };
+            ShaderLibrary.SetSmoothness(material, 0.28f);
+            // A low emissive in the team's neon keeps the figure separated from a
+            // dark pitch without making it glow.
+            ShaderLibrary.SetEmission(material, neon * 0.12f);
             return material;
         }
     }

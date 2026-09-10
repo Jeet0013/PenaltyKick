@@ -8,33 +8,30 @@ namespace CyberGoal.Unity.Characters
     /// <remarks>
     /// <para>
     /// The seam between gameplay and art. Nothing outside this file knows whether
-    /// the body underneath is four capsules or a rigged, skinned humanoid with
-    /// finger bones — callers ask for a pose and this decides how to produce it.
+    /// the body underneath is a generated skinned mesh or a rigged, scanned
+    /// humanoid with finger bones — callers ask for a pose and this decides how to
+    /// produce it.
     /// </para>
     /// <para>
-    /// That matters because §23 requires real characters before the art is
-    /// considered done, and a codebase where the striker's run-up reaches into
-    /// specific capsule transforms cannot accept one. With this in place, the
-    /// swap is: assign a prefab, set an Animator, delete nothing.
+    /// Poses are expressed as <em>intent</em> ("dive this far, this way"), never
+    /// as joint angles. A rigged character satisfies them with animator
+    /// parameters; the generated body satisfies them by rotating bones. Callers
+    /// never learn which, which is what makes §23's character swap a one-field
+    /// change rather than a rewrite of every system that moves a person.
     /// </para>
     /// </remarks>
     public sealed class CharacterVisual : MonoBehaviour
     {
-        [Tooltip("True while this is procedural stand-in geometry rather than art.")]
+        [Tooltip("True while this is a generated body rather than final art.")]
         public bool isPlaceholder = true;
 
-        [Header("Placeholder joints (unused when an Animator is present)")]
-        public Transform torso;
-        public Transform head;
-        public Transform leftArm;
-        public Transform rightArm;
-        public Transform leftLeg;
-        public Transform rightLeg;
+        [Tooltip("Indexed by Bone. Null when an Animator is driving instead.")]
+        public Transform[] bones;
 
         private Animator _animator;
         private float _breathePhase;
 
-        /// <summary>Whether a real rig is driving this body.</summary>
+        /// <summary>Whether a real humanoid rig is driving this body.</summary>
         public bool IsRigged => _animator != null && _animator.isHuman;
 
         public void Bind()
@@ -43,12 +40,14 @@ namespace CyberGoal.Unity.Characters
             _breathePhase = Random.value * 10f;
         }
 
+        private Transform Get(Bone bone)
+        {
+            if (bones == null) return null;
+            int i = (int)bone;
+            return i >= 0 && i < bones.Length ? bones[i] : null;
+        }
+
         // ── Pose API ─────────────────────────────────────────────────────────
-        //
-        // Deliberately expressed as intent ("dive this far, this way") rather
-        // than as joint angles. A rigged character satisfies these with animator
-        // parameters; the placeholder satisfies them by rotating pivots. Callers
-        // never learn which.
 
         /// <summary>Idle breathing, so a waiting figure is not a statue.</summary>
         public void Idle(float deltaTime)
@@ -60,17 +59,23 @@ namespace CyberGoal.Unity.Characters
             }
 
             _breathePhase += deltaTime * 1.8f;
-            if (torso != null)
-            {
-                Vector3 scale = torso.localScale;
-                scale.y = torso.localScale.y; // preserved; breathing rides on position
-                torso.localScale = scale;
-                torso.localPosition = new Vector3(0, 1.27f + Mathf.Sin(_breathePhase) * 0.008f, 0);
-            }
-            SetLimbs(4f, 4f, 0f, 0f);
+            float breath = Mathf.Sin(_breathePhase);
+
+            // The chest lifts and the shoulders follow. Moving only the chest looks
+            // like a bellows; moving the shoulders with it looks like breathing.
+            Rotate(Bone.Chest, breath * 1.4f, 0f, 0f);
+            Rotate(Bone.Spine, breath * 0.7f, 0f, 0f);
+
+            // Arms hang slightly out from the body, not flat against it.
+            Rotate(Bone.UpperArmL, 0f, 0f, 5f + breath * 0.6f);
+            Rotate(Bone.UpperArmR, 0f, 0f, -5f - breath * 0.6f);
+            Rotate(Bone.ForearmL, 6f, 0f, 0f);
+            Rotate(Bone.ForearmR, 6f, 0f, 0f);
+            Rotate(Bone.ThighL, 0f, 0f, 0f);
+            Rotate(Bone.ThighR, 0f, 0f, 0f);
         }
 
-        /// <summary>The keeper's ready stance: low, arms out.</summary>
+        /// <summary>The keeper's ready stance: crouched, arms out and forward.</summary>
         public void ReadyStance()
         {
             if (IsRigged)
@@ -78,18 +83,28 @@ namespace CyberGoal.Unity.Characters
                 _animator.SetBool(AnimatorParams.Ready, true);
                 return;
             }
-            SetLimbs(66f, 66f, 6f, -6f);
+
+            // Weight low and arms wide. §16 calls the ready stance most of what
+            // makes a keeper look like a keeper rather than a person in a goal.
+            Rotate(Bone.Hips, 8f, 0f, 0f);
+            Rotate(Bone.Spine, 6f, 0f, 0f);
+            Rotate(Bone.ThighL, -14f, 0f, -6f);
+            Rotate(Bone.ThighR, -14f, 0f, 6f);
+            Rotate(Bone.ShinL, 26f, 0f, 0f);
+            Rotate(Bone.ShinR, 26f, 0f, 0f);
+            Rotate(Bone.UpperArmL, -18f, 0f, 62f);
+            Rotate(Bone.UpperArmR, -18f, 0f, -62f);
+            Rotate(Bone.ForearmL, -28f, 0f, 0f);
+            Rotate(Bone.ForearmR, -28f, 0f, 0f);
         }
 
         /// <summary>
         /// A dive, expressed as the extension the rules computed.
         /// </summary>
-        /// <param name="lateral">-1 left, 0 centre, +1 right.</param>
-        /// <param name="high">Whether it is a high dive.</param>
         /// <param name="extension">
         /// 0-1, straight from <c>Goalkeeper.ExtensionAt</c>. Passing the rules'
-        /// own number rather than a separate animation timeline is what keeps
-        /// what the player sees and what was judged from disagreeing.
+        /// own number rather than running a separate animation timeline is what
+        /// stops the keeper visibly touching a ball that was scored as a goal.
         /// </param>
         public void Dive(int lateral, bool high, float extension, Vector3 origin)
         {
@@ -106,13 +121,35 @@ namespace CyberGoal.Unity.Characters
                 lateral * 2.45f * extension,
                 (high ? 1.15f : 0.22f) * extension,
                 0f);
-            // Rotating into the dive is what makes it read as a dive rather than
-            // as a figure sliding sideways.
-            transform.rotation = Quaternion.Euler(0, 0, -lateral * extension * 82f);
-            SetLimbs(92f, 92f, high ? 28f : -12f, high ? -28f : 12f);
+            // Rotating into the dive is what makes it read as a dive rather than a
+            // figure sliding sideways.
+            transform.rotation = Quaternion.Euler(0f, 0f, -lateral * extension * 82f);
+
+            // The leading arm reaches; the trailing arm counterbalances. Both fully
+            // extended looks like a skydiver.
+            float reach = 78f + extension * 24f;
+            if (lateral < 0)
+            {
+                Rotate(Bone.UpperArmL, 0f, 0f, reach);
+                Rotate(Bone.UpperArmR, -30f, 0f, -34f);
+            }
+            else
+            {
+                Rotate(Bone.UpperArmR, 0f, 0f, -reach);
+                Rotate(Bone.UpperArmL, -30f, 0f, 34f);
+            }
+            Rotate(Bone.ForearmL, -8f, 0f, 0f);
+            Rotate(Bone.ForearmR, -8f, 0f, 0f);
+
+            // Legs trail on a low dive and tuck on a high one.
+            float leg = high ? 34f : -18f;
+            Rotate(Bone.ThighL, leg, 0f, 0f);
+            Rotate(Bone.ThighR, leg * 0.6f, 0f, 0f);
+            Rotate(Bone.ShinL, high ? 46f : 12f, 0f, 0f);
+            Rotate(Bone.ShinR, high ? 40f : 8f, 0f, 0f);
         }
 
-        /// <summary>The striker's approach. <paramref name="runUp"/> is 0 at the mark, 1 at contact.</summary>
+        /// <summary>The striker's approach. 0 at the mark, 1 at contact.</summary>
         public void RunUp(float runUp)
         {
             if (IsRigged)
@@ -122,10 +159,23 @@ namespace CyberGoal.Unity.Characters
             }
 
             float stride = Mathf.Sin(runUp * Mathf.PI * 3.2f);
-            SetLimbs(stride * 29f, -stride * 29f, stride * 52f, -stride * 52f);
+
+            // Contralateral: the left arm swings with the right leg. Swinging them
+            // together is the single clearest sign of a body that was animated by
+            // someone not watching a person walk.
+            Rotate(Bone.ThighL, stride * 42f, 0f, 0f);
+            Rotate(Bone.ThighR, -stride * 42f, 0f, 0f);
+            Rotate(Bone.ShinL, Mathf.Max(0f, -stride) * 46f, 0f, 0f);
+            Rotate(Bone.ShinR, Mathf.Max(0f, stride) * 46f, 0f, 0f);
+            Rotate(Bone.UpperArmL, -stride * 34f, 0f, 12f);
+            Rotate(Bone.UpperArmR, stride * 34f, 0f, -12f);
+            Rotate(Bone.ForearmL, 34f, 0f, 0f);
+            Rotate(Bone.ForearmR, 34f, 0f, 0f);
+            // Lean into the run.
+            Rotate(Bone.Hips, runUp * 7f, 0f, 0f);
         }
 
-        /// <summary>The strike. <paramref name="progress"/> runs 0-1 through the swing.</summary>
+        /// <summary>The strike: plant, swing, follow through.</summary>
         public void Strike(float progress)
         {
             if (IsRigged)
@@ -134,10 +184,22 @@ namespace CyberGoal.Unity.Characters
                 return;
             }
 
-            // Overshoot and settle: the follow-through sells contact more than the
-            // contact frame does.
-            float swing = Mathf.Sin(Mathf.Clamp01(progress) * Mathf.PI) * 86f;
-            SetLimbs(34f, -17f, -swing, swing * 0.3f);
+            float p = Mathf.Clamp01(progress);
+            // Overshoot and settle. The follow-through sells contact far more than
+            // the contact frame does.
+            float swing = Mathf.Sin(p * Mathf.PI) * 96f;
+
+            Rotate(Bone.ThighR, -swing, 0f, 0f);
+            Rotate(Bone.ShinR, Mathf.Max(0f, Mathf.Sin(p * Mathf.PI - 0.6f)) * 52f, 0f, 0f);
+            // The plant leg stays under the body and slightly bent.
+            Rotate(Bone.ThighL, 12f, 0f, 0f);
+            Rotate(Bone.ShinL, 18f, 0f, 0f);
+            // Torso counter-rotates against the kicking leg — that is where the
+            // power visibly comes from.
+            Rotate(Bone.Hips, 10f, -swing * 0.12f, 0f);
+            Rotate(Bone.Chest, 6f, swing * 0.16f, 0f);
+            Rotate(Bone.UpperArmL, -swing * 0.4f, 0f, 42f);
+            Rotate(Bone.UpperArmR, swing * 0.25f, 0f, -22f);
         }
 
         /// <summary>One arm straight up — §18's visual whistle cue.</summary>
@@ -148,32 +210,47 @@ namespace CyberGoal.Unity.Characters
                 _animator.SetFloat(AnimatorParams.SignalRaise, raised);
                 return;
             }
-            SetLimbs(6f, raised * 166f, 0f, 0f);
+
+            Rotate(Bone.UpperArmR, 0f, 0f, -raised * 168f);
+            Rotate(Bone.ForearmR, -raised * 14f, 0f, 0f);
+            Rotate(Bone.UpperArmL, 0f, 0f, 8f);
+            // Looks up at the striker as the arm rises.
+            Rotate(Bone.Head, -raised * 8f, 0f, 0f);
+        }
+
+        /// <summary>Cheering, for crowd figures.</summary>
+        public void Cheer(float intensity, float phase)
+        {
+            if (IsRigged) return;
+            float wave = Mathf.Sin(phase) * intensity;
+            Rotate(Bone.UpperArmL, 0f, 0f, 120f + wave * 34f);
+            Rotate(Bone.UpperArmR, 0f, 0f, -120f - wave * 34f);
+            Rotate(Bone.Chest, wave * 5f, 0f, 0f);
         }
 
         public void ResetPose()
         {
             transform.rotation = Quaternion.identity;
-            SetLimbs(4f, 4f, 0f, 0f);
+            if (bones == null) return;
+            for (int i = 0; i < bones.Length; i++)
+            {
+                if (i == (int)Bone.Root) continue;
+                if (bones[i] != null) bones[i].localRotation = Quaternion.identity;
+            }
         }
 
-        /// <summary>Angles in degrees. Arms swing outward (Z), legs fore and aft (X).</summary>
-        private void SetLimbs(float leftArmDeg, float rightArmDeg, float leftLegDeg, float rightLegDeg)
+        private void Rotate(Bone bone, float x, float y, float z)
         {
-            if (leftArm != null) leftArm.localRotation = Quaternion.Euler(0, 0, leftArmDeg);
-            if (rightArm != null) rightArm.localRotation = Quaternion.Euler(0, 0, -rightArmDeg);
-            if (leftLeg != null) leftLeg.localRotation = Quaternion.Euler(leftLegDeg, 0, 0);
-            if (rightLeg != null) rightLeg.localRotation = Quaternion.Euler(rightLegDeg, 0, 0);
+            Transform t = Get(bone);
+            if (t != null) t.localRotation = Quaternion.Euler(x, y, z);
         }
     }
 
-    /// <summary>
-    /// Animator parameter hashes, named once.
-    /// </summary>
+    /// <summary>Animator parameter hashes, named once.</summary>
     /// <remarks>
     /// Hashed rather than string-compared because these are set every frame during
-    /// a dive, and named in one place so that wiring a real rig means matching
-    /// this list rather than grepping for string literals.
+    /// a dive, and listed in one place so wiring a real rig means matching this
+    /// table rather than grepping for string literals.
     /// </remarks>
     public static class AnimatorParams
     {

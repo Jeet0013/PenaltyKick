@@ -43,6 +43,7 @@ namespace CyberGoal.Unity.Core
         private MatchHud _hud;
         private BallView _ball;
         private QualityController _quality;
+        private StadiumBlockout _stadium;
 
         private Team _home;
         private Team _away;
@@ -82,10 +83,10 @@ namespace CyberGoal.Unity.Core
         private void BuildWorld()
         {
             var stadiumGo = new GameObject("Stadium");
-            var stadium = stadiumGo.AddComponent<StadiumBlockout>();
-            stadium.homeNeon = ToColor(_home.Neon);
-            stadium.awayNeon = ToColor(_away.Neon);
-            stadium.Build(_quality.Preset);
+            _stadium = stadiumGo.AddComponent<StadiumBlockout>();
+            _stadium.homeNeon = ToColor(_home.Neon);
+            _stadium.awayNeon = ToColor(_away.Neon);
+            _stadium.Build(_quality.Preset);
 
             var cameraGo = new GameObject("MainCamera");
             cameraGo.tag = "MainCamera";
@@ -177,6 +178,20 @@ namespace CyberGoal.Unity.Core
             _hud.Refresh(_runner.Director.Match);
             _hud.ShowTiming(state == GameState.Aiming);
 
+            // §19: the crowd tightens before a kick and erupts after one. Driven
+            // from match state rather than from the celebration effect, so the
+            // stands react even when flashes and slow motion are switched off for
+            // accessibility or performance.
+            SetCrowdMood(state switch
+            {
+                GameState.RefereeReady or GameState.Whistle or GameState.Aiming
+                    or GameState.Shooting or GameState.BallInPlay => CrowdMood.Tension,
+                GameState.GoalResult or GameState.Celebration => CrowdMood.Goal,
+                GameState.SaveResult => CrowdMood.Save,
+                GameState.Victory or GameState.Defeat => CrowdMood.Victory,
+                _ => CrowdMood.Idle
+            });
+
             switch (state)
             {
                 case GameState.MatchIntro:
@@ -211,6 +226,11 @@ namespace CyberGoal.Unity.Core
                     break;
                 }
             }
+        }
+
+        private void SetCrowdMood(CrowdMood mood)
+        {
+            if (_stadium != null && _stadium.Crowd != null) _stadium.Crowd.SetMood(mood);
         }
 
         private void OnKickResolved(KickAttempt attempt)

@@ -43,6 +43,9 @@ namespace CyberGoal.Unity.Environment
         public Color homeNeon = new Color(0.22f, 0.84f, 1f);
         public Color awayNeon = new Color(1f, 0.3f, 0.24f);
 
+        /// <summary>The crowd, so the match can drive its mood (§19).</summary>
+        public CrowdSystem Crowd { get; private set; }
+
         public void Build(QualityPreset quality)
         {
             BuildTurf();
@@ -53,6 +56,33 @@ namespace CyberGoal.Unity.Environment
             BuildLighting(quality);
         }
 
+        /// <summary>
+        /// The playing surface.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// A flat green plane is the clearest sign of a generated scene, and the
+        /// fix is not more polygons — it is <em>variation</em>. Three things do
+        /// almost all the work here, in this order of importance:
+        /// </para>
+        /// <list type="number">
+        /// <item><b>Mown stripes.</b> The single strongest cue that a surface is a
+        /// maintained sports pitch. Real stripes are the same grass bent in
+        /// opposite directions, so the difference in value must be small — felt
+        /// rather than seen. Overdo it and it reads as painted bands.</item>
+        /// <item><b>Blade noise.</b> Breaks the flat fill at close range. Without
+        /// it the turf is a solid colour and the eye reads "digital" immediately.</item>
+        /// <item><b>Wear.</b> A penalty area is scuffed where players stand and
+        /// worn around the spot. Perfectly even grass is a texture; uneven grass
+        /// is a place.</item>
+        /// </list>
+        /// <para>
+        /// Kept matte. An earlier version had a strong clearcoat, and the
+        /// floodlight reflected as a white river down the middle of the penalty
+        /// area — the whole pitch read as water rather than grass. Wet turf is
+        /// glossier than dry turf by a little, not by a factor of four.
+        /// </para>
+        /// </remarks>
         private void BuildTurf()
         {
             var turf = GameObject.CreatePrimitive(PrimitiveType.Plane);
@@ -63,12 +93,59 @@ namespace CyberGoal.Unity.Environment
             turf.transform.position = new Vector3(0f, 0f, GoalZ + 30f);
             DestroyImmediate(turf.GetComponent<Collider>());
 
-            // Deep pitch green, and matte. A glossy pitch mirrors the floodlights
-            // as a white river down the middle of the penalty area and the whole
-            // surface reads as water rather than grass — which is exactly what
-            // happened in the prototype before the roughness was raised.
-            turf.GetComponent<Renderer>().sharedMaterial =
-                Materials.Lit(new Color(0.10f, 0.29f, 0.14f), smoothness: 0.06f);
+            Material material = Materials.Lit(Color.white, smoothness: 0.06f);
+            material.mainTexture = TurfTexture();
+            if (material.HasProperty("_BaseMap")) material.SetTexture("_BaseMap", material.mainTexture);
+            // Tiled across the pitch. The stripes are baked at pitch scale so they
+            // must not repeat within it; the noise can.
+            if (material.HasProperty("_BaseMap_ST")) { }
+            turf.GetComponent<Renderer>().sharedMaterial = material;
+        }
+
+        /// <summary>Grass, stripes and wear, painted into one texture.</summary>
+        private static Texture2D TurfTexture()
+        {
+            const int size = 512;
+            var texture = new Texture2D(size, size, TextureFormat.RGBA32, true);
+            var pixels = new Color32[size * size];
+
+            // Deep pitch green. It has to carry more green than looks right in
+            // isolation: a warm floodlight and a cyan rim both pull it away.
+            var baseColour = new Color(0.075f, 0.26f, 0.115f);
+
+            for (int y = 0; y < size; y++)
+            {
+                // 14 stripes across the pitch, alternating direction of cut.
+                int stripe = (y * 14) / size;
+                float band = stripe % 2 == 0 ? 1.055f : 0.945f;
+
+                for (int x = 0; x < size; x++)
+                {
+                    // Blade noise: fine, high-frequency, low-amplitude.
+                    float n = Hash01(x * 0.7f + y * 3.1f) * 0.16f - 0.08f;
+                    // Broad wear: slow variation that lightens patches.
+                    float wear = Mathf.Sin(x * 0.021f) * Mathf.Cos(y * 0.017f) * 0.05f;
+
+                    float k = band + n + wear;
+                    var c = new Color(
+                        Mathf.Clamp01(baseColour.r * k),
+                        Mathf.Clamp01(baseColour.g * k),
+                        Mathf.Clamp01(baseColour.b * k));
+                    pixels[y * size + x] = c;
+                }
+            }
+
+            texture.SetPixels32(pixels);
+            texture.Apply();
+            texture.wrapMode = TextureWrapMode.Repeat;
+            texture.anisoLevel = 8;
+            return texture;
+        }
+
+        private static float Hash01(float v)
+        {
+            float s = Mathf.Sin(v * 12.9898f) * 43758.5453f;
+            return s - Mathf.Floor(s);
         }
 
         /// <summary>Regulation markings, drawn into a texture rather than as geometry.</summary>
@@ -267,60 +344,15 @@ namespace CyberGoal.Unity.Environment
             }
         }
 
-        /// <summary>
-        /// The crowd, as instanced quads. PLACEHOLDER — see the class remarks.
-        /// </summary>
-        /// <remarks>
-        /// Seated in rows. The obvious implementation walks the angle while taking
-        /// the tier from <c>i % rows</c>, which makes every consecutive spectator
-        /// jump to a different height and produces a zig-zag of confetti rather
-        /// than a crowd. People sit in rows; filling one row at a time, with half a
-        /// seat of stagger so rows interlock, is the whole difference.
-        /// </remarks>
+        /// <summary>Spectators, as instanced low-poly humanoids (§19, §48).</summary>
         private void BuildCrowd(int count)
         {
-            var crowd = new GameObject("Crowd");
-            crowd.transform.SetParent(transform, false);
-
-            var mesh = BuildQuad();
-            Material material = Materials.Unlit(Color.white, transparent: true, vertexColour: true);
-
-            const int rows = 9;
-            int perRow = Mathf.Max(1, Mathf.CeilToInt(count / (float)rows));
-
-            for (int i = 0; i < count; i++)
-            {
-                int row = i / perRow;
-                int seat = i % perRow;
-                float angle = (seat + (row % 2) * 0.5f) / perRow * Mathf.PI * 2f;
-
-                float ring = 26.5f + row * 1.9f;
-                float height = 3.0f + row * 1.32f + (Random.value - 0.5f) * 0.18f;
-
-                var person = new GameObject("Spectator");
-                person.transform.SetParent(crowd.transform, false);
-                person.transform.position = new Vector3(
-                    Mathf.Cos(angle) * ring, height, Mathf.Sin(angle) * ring + GoalZ + 8f);
-                person.transform.LookAt(new Vector3(0f, 2f, GoalZ));
-                person.transform.localScale = new Vector3(0.24f, 0.42f, 1f);
-
-                var filter = person.AddComponent<MeshFilter>();
-                filter.sharedMesh = mesh;
-                var renderer = person.AddComponent<MeshRenderer>();
-                renderer.sharedMaterial = material;
-                renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-                renderer.receiveShadows = false;
-
-                // Split the bowl between the sides with a scatter of neutrals, and
-                // keep it dark: these are unlit cards 30 m away in a night stadium,
-                // and at full value they glow brighter than the pitch.
-                bool neutral = Random.value < 0.45f;
-                Color tint = neutral
-                    ? new Color(0.42f, 0.49f, 0.56f)
-                    : angle < Mathf.PI ? homeNeon : awayNeon;
-                renderer.material.color = tint * (0.14f + Random.value * 0.26f);
-            }
+            var go = new GameObject("Crowd");
+            go.transform.SetParent(transform, false);
+            Crowd = go.AddComponent<CrowdSystem>();
+            Crowd.Build(count, homeNeon, awayNeon);
         }
+
 
         private void BuildLighting(QualityPreset quality)
         {
@@ -359,19 +391,6 @@ namespace CyberGoal.Unity.Environment
             go.GetComponent<Renderer>().sharedMaterial = material;
         }
 
-        private static Mesh BuildQuad()
-        {
-            var mesh = new Mesh { name = "SpectatorQuad" };
-            mesh.vertices = new[]
-            {
-                new Vector3(-0.5f, -0.5f, 0f), new Vector3(0.5f, -0.5f, 0f),
-                new Vector3(-0.5f, 0.5f, 0f), new Vector3(0.5f, 0.5f, 0f)
-            };
-            mesh.uv = new[] { Vector2.zero, Vector2.right, Vector2.up, Vector2.one };
-            mesh.triangles = new[] { 0, 2, 1, 2, 3, 1 };
-            mesh.RecalculateNormals();
-            return mesh;
-        }
     }
 
     /// <summary>Material helpers, so the URP shader name is written once.</summary>
