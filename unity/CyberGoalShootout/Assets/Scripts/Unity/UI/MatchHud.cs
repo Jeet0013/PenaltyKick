@@ -240,13 +240,40 @@ namespace CyberGoal.Unity.UI
             rect.sizeDelta = size2;
 
             Text text = go.GetComponent<Text>();
-            text.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            text.font = BuiltinFont();
             text.fontSize = size;
             text.alignment = anchor;
             text.color = Color.white;
             text.horizontalOverflow = HorizontalWrapMode.Overflow;
             text.verticalOverflow = VerticalWrapMode.Overflow;
             return text;
+        }
+
+        private static Font _font;
+
+        /// <summary>
+        /// The built-in font, whatever it is called in this Unity version.
+        /// </summary>
+        /// <remarks>
+        /// Renamed from <c>Arial.ttf</c> to <c>LegacyRuntime.ttf</c> in Unity
+        /// 2022.2. Asking for the wrong one returns null rather than throwing, and
+        /// a <c>Text</c> with a null font draws nothing at all — so the failure is
+        /// an invisible HUD with a clean console, which is about the worst way for
+        /// this to go wrong. Both names are tried, and a missing font is reported
+        /// rather than left silent.
+        /// </remarks>
+        private static Font BuiltinFont()
+        {
+            if (_font != null) return _font;
+
+            _font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf")
+                    ?? Resources.GetBuiltinResource<Font>("Arial.ttf");
+
+            if (_font == null)
+            {
+                Debug.LogWarning("[CyberGoal] No built-in font found; HUD text will not render.");
+            }
+            return _font;
         }
 
         private static void Stretch(RectTransform rect)
