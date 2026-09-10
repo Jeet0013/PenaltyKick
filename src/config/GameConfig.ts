@@ -10,7 +10,7 @@
 declare const __BUILD_ID__: string | undefined;
 
 export const GAME_CONFIG = {
-  name: 'Penalty Kick',
+  name: 'CYBER GOAL: SHOOTOUT',
   version: '0.1.0',
   /**
    * Which build this is.

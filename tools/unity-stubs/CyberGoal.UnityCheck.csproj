@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Compile-check harness. NOT SHIPPED — lives outside Assets/ so Unity never
+    sees it. See README.md for exactly what a green build here does and does not
+    prove.
+  -->
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <LangVersion>9.0</LangVersion>
+    <Nullable>disable</Nullable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <AssemblyName>CyberGoal.UnityCheck</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      Glob rather than one named file, so concurrent work can add stubs in
+      separate files (UnityStubs*.cs) without two authors editing the same one.
+    -->
+    <Compile Include="UnityStubs*.cs" />
+    <Compile Include="../../unity/CyberGoalShootout/Assets/Scripts/Unity/**/*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../unity/CyberGoalShootout/Assets/Scripts/Core/CyberGoal.Core.csproj" />
+  </ItemGroup>
+
+</Project>

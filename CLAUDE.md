@@ -1,73 +1,83 @@
-# Penalty Kick
+# CYBER GOAL: SHOOTOUT
 
-A 3D penalty shootout for the browser. TypeScript + Vite + Three.js + Rapier.
+A 3D futuristic penalty shootout. **Unity + C# + URP**, mobile-first, landscape.
 
-## The engine is Three.js, and everything is 3D
+## Engine: Unity (changed 2026-09-10)
 
-Settled, and not open for re-litigation by tooling:
+This project ran on Three.js until the master development prompt specified
+Unity, C# and URP. The owner was asked directly, given the cost — losing the
+browser share link, losing 5,173 working lines — and confirmed Unity.
 
-- **Three.js (r185) renders everything.** The ball, the goal, the keeper, the
-  pitch, the crowd. Not a 2D canvas with perspective faked on top, and not a
-  sprite pretending to be a ball.
-- **Rapier does the physics** — the same pairing that carried the last project,
-  where a coin bouncing off a rail had to feel like a coin bouncing off a rail.
-- **No desktop engine.** Some installed skills (`setup-engine` and similar) will
-  offer Godot, Unity or Unreal when asked to pick an engine. They are answering
-  a question that is already closed. This game runs in a browser tab from a
-  static file, which is what makes a share link work at all — the property the
-  last project depended on entirely.
-- **The only 2D is the DOM overlay**: menus, the scoreboard, the power meter.
-  Those are HTML on top of the canvas, animated with CSS or framer-motion's
-  imperative API. Nothing in the DOM animates anything in the scene; the render
-  loop owns that.
+So the earlier rule in this file, which said the engine question was "already
+closed" in favour of Three.js, is **void**. Do not re-open it in either
+direction without asking the owner; it has now been decided twice.
 
-## Status
+The Three.js prototype is preserved at the repository root (`src/`, `index.html`)
+and still builds. It is the **design proof**, not the product: its rules,
+physics constants, keeper reach model and AI were validated by 77 tests, and
+that logic is what was ported to C#, not thrown away. Treat it as reference.
 
-**Scaffold only.** The engine, build and deploy pipeline are in place and
-proven; the game's rules, feel and art direction have not been specified yet
-and nothing should be invented ahead of them.
+## Layout
+
+```
+unity/CyberGoalShootout/   the game
+  Assets/Scripts/Core/     no UnityEngine reference — see below
+  Assets/Scripts/Unity/    MonoBehaviours, the only place Unity types appear
+core-tests/                dotnet test project running the Core assembly
+src/, index.html           the preserved Three.js prototype
+```
+
+## The Core assembly must never reference UnityEngine
+
+The single most important rule here, and it is not a style preference:
+
+- **It is the only way to test anything on this machine.** Unity is not
+  installed, and there is not enough disk space to install it. A Core assembly
+  that targets netstandard2.1 compiles and runs under `dotnet test` in seconds.
+  A rule that imports `UnityEngine` cannot be run at all until someone installs
+  a 15 GB editor.
+- It is what §51 of the brief asks for, and what makes server-authoritative
+  multiplayer possible later: the server cannot run a MonoBehaviour.
+- It keeps the match deterministic. `UnityEngine.Random` and `Time.deltaTime`
+  are both outside the simulation's control; `Rng` and an explicit timestep are
+  not.
+
+`Vector3` and friends therefore have small plain-C# equivalents in Core. Convert
+at the boundary, in the MonoBehaviour, and nowhere else.
 
 ## Commands
 
 ```bash
-npm install
-npm run dev          # Vite dev server, exposed on the LAN for phone testing
-npm run build        # typecheck + tests + production build
-npm run build:single # one self-contained HTML file → dist-single/
-npm run typecheck
-npm test
+dotnet test core-tests            # the rules, physics, keeper and AI
+dotnet build unity/CyberGoalShootout/Assets/Scripts/Core
 ```
+
+Unity's own Test Runner picks up the same NUnit tests once the editor exists.
 
 ## Binding rules
 
-Carried over from the previous project, where each was learned the hard way:
+Carried from the previous project, each learned the hard way:
 
-1. **Verify on a real device, not a desktop browser.** Four bugs in the last
-   project were invisible everywhere except a phone: a CSS rule that rendered
-   two full-screen images at once, controls with a border too faint to see on
-   a dark screen, an audio fallback firing on first use, and a light that
-   washed out one seat in four.
-2. **The build stamp is not decoration.** Every artifact says which build it
-   is, on screen. A bug was reported three times against a build that predated
-   its own fix; the stamp is what ends that conversation in one glance.
-3. **Never let a deploy be a manual step.** CI builds and publishes on merge to
-   `main`, gated on typecheck and tests. A hand-build is invisible when it does
-   not happen.
-4. **Measure before diagnosing.** The four-player lighting bug was first blamed
-   on a material; the material was already fixed and the symptom remained. One
-   query of the camera and light positions found it immediately.
+1. **Verify on a real device, not a desktop browser or the Editor.** Four bugs
+   in the last project were invisible everywhere except a phone.
+2. **The build stamp is not decoration.** Every artifact says which build it is,
+   on screen. A bug was reported three times against a build that predated its
+   own fix.
+3. **Never let a deploy be a manual step.**
+4. **Measure before diagnosing.** A lighting bug was blamed on a material that
+   was already correct; one query of the actual camera and light positions found
+   it in a minute. The cyan pitch in the web prototype had three separate
+   causes and guessing found none of them.
 5. **No placeholder gameplay logic** where a real implementation is possible.
-6. Tunables belong in `config/`, never inline in the systems that read them.
+6. Tunables belong in config, never inline in the systems that read them.
+7. **Say what is placeholder.** The brief asks for WORKING / PARTIAL /
+   PLACEHOLDER / NOT IMPLEMENTED, and capsule characters are PLACEHOLDER until
+   real rigged humanoids replace them (§21 of the art direction).
 
-## Architecture invariants
+## Characters
 
-- Rules and scoring must be driveable headlessly — no import from rendering
-  into gameplay. It is what makes the logic testable and keeps multiplayer
-  possible later.
-- Systems talk through an event bus, not direct references.
-- One module, one responsibility. No giant files.
-
-## What is deliberately not here yet
-
-Rules, pitch dimensions, keeper behaviour, shot mechanics, art direction, UI.
-All of it waits for the design.
+Owner chose MakeHuman (§10) over CC0 asset packs. MakeHuman is a desktop GUI
+that cannot be driven from here, so character generation is an owner task;
+`docs/CHARACTER-PIPELINE.md` has the exact settings and export options, and the
+integration points are already in the code. Until then the figures are
+anatomically-proportioned placeholders and are labelled as such.

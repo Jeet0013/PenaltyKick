@@ -1,0 +1,344 @@
+using CyberGoal.Core.Physics;
+using CyberGoal.Core.Rules;
+using CyberGoal.Core.Teams;
+using CyberGoal.Unity.CameraWork;
+using CyberGoal.Unity.Characters;
+using CyberGoal.Unity.Environment;
+using CyberGoal.Unity.Gameplay;
+using CyberGoal.Unity.Input;
+using CyberGoal.Unity.UI;
+using UnityEngine;
+
+namespace CyberGoal.Unity.Core
+{
+    /// <summary>
+    /// Builds and wires the whole game at runtime.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why there is no .unity scene file.</b> A Unity scene is YAML full of
+    /// file IDs and asset GUIDs, and one wrong reference produces a scene that
+    /// opens broken with an error that names a number rather than a cause. This
+    /// project was authored without an editor available to generate or validate
+    /// one. Constructing the scene in code means it opens correctly in any Unity
+    /// version, is diffable in review, and needs no asset the repository does not
+    /// contain.
+    /// </para>
+    /// <para>
+    /// <see cref="Boot"/> carries <c>RuntimeInitializeOnLoadMethod</c>, so the game
+    /// starts in <em>whatever</em> scene is loaded, including the empty default one
+    /// a new project ships with. There is nothing to set up: press Play.
+    /// </para>
+    /// <para>
+    /// When the art pipeline arrives this becomes the thing that loads a scene
+    /// instead of building one, and the wiring below becomes the prefab's
+    /// inspector references. The order of operations is the part worth keeping.
+    /// </para>
+    /// </remarks>
+    public sealed class GameBootstrap : MonoBehaviour
+    {
+        private MatchRunner _runner;
+        private PenaltyCycle _cycle;
+        private CameraDirector _camera;
+        private MatchHud _hud;
+        private BallView _ball;
+        private QualityController _quality;
+        private StadiumBlockout _stadium;
+        private CameraFlashes _flashes;
+        private CheerleaderSquad _squad;
+
+        private Team _home;
+        private Team _away;
+
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
+        private static void Boot()
+        {
+            var go = new GameObject("[CyberGoal]");
+            go.AddComponent<GameBootstrap>();
+            DontDestroyOnLoad(go);
+        }
+
+        private void Awake()
+        {
+            // §2: landscape is the gameplay orientation, and the camera framing and
+            // HUD layout are both built for it.
+            Screen.orientation = ScreenOrientation.AutoRotation;
+            Screen.autorotateToLandscapeLeft = true;
+            Screen.autorotateToLandscapeRight = true;
+            Screen.autorotateToPortrait = false;
+            Screen.autorotateToPortraitUpsideDown = false;
+            Screen.sleepTimeout = SleepTimeout.NeverSleep;
+
+            _quality = gameObject.AddComponent<QualityController>();
+
+            _home = TeamCatalogue.DefaultHome;
+            _away = TeamCatalogue.DefaultAway;
+
+            BuildWorld();
+            BuildActors();
+            BuildUi();
+            Wire();
+
+            Debug.Log($"[CyberGoal] {_home.Name} vs {_away.Name} · build {Application.version}");
+        }
+
+        private void BuildWorld()
+        {
+            var stadiumGo = new GameObject("Stadium");
+            _stadium = stadiumGo.AddComponent<StadiumBlockout>();
+            _stadium.homeNeon = ToColor(_home.Neon);
+            _stadium.awayNeon = ToColor(_away.Neon);
+            _stadium.Build(_quality.Preset);
+
+            // Camera flashes and the cheer squad are cosmetic and scale with the
+            // quality tier: a low-end device gets a trickle rather than none, so
+            // the stadium still reads as alive.
+            var flashesGo = new GameObject("CameraFlashes");
+            flashesGo.transform.SetParent(stadiumGo.transform, false);
+            _flashes = flashesGo.AddComponent<CameraFlashes>();
+            _flashes.Build(Mathf.Max(80, _quality.Preset.CrowdCount / 6));
+
+            var squadGo = new GameObject("Cheerleaders");
+            squadGo.transform.SetParent(stadiumGo.transform, false);
+            _squad = squadGo.AddComponent<CheerleaderSquad>();
+            _squad.Build(_quality.Tier == QualityTier.Low ? 6 : 12, ToColor(_home.Neon));
+
+            var cameraGo = new GameObject("MainCamera");
+            cameraGo.tag = "MainCamera";
+            _camera = cameraGo.AddComponent<CameraDirector>();
+            cameraGo.AddComponent<AudioListener>();
+        }
+
+        private void BuildActors()
+        {
+            var ballGo = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            ballGo.name = "Ball";
+            ballGo.transform.localScale = Vector3.one * (float)BallPhysics.Field.BallRadius * 2f;
+            // No collider and no Rigidbody: the flight is solved in Core, and a
+            // second physics opinion is the fastest way to make a goal ambiguous.
+            DestroyImmediate(ballGo.GetComponent<Collider>());
+            _ball = ballGo.AddComponent<BallView>();
+            _ball.ResetToSpot();
+
+            CharacterVisual striker = MakeCharacter("Striker", _home,
+                new Vector3(-1.6f, 0f, 5.4f), 180f);
+            CharacterVisual keeper = MakeCharacter("Goalkeeper", _away,
+                new Vector3(0f, 0f, -(float)BallPhysics.Field.SpotToGoal + 0.35f), 0f);
+            // The referee stands out by the edge of the box. Closer than this and
+            // he clips the edge of a 30-degree lens and reads as an object stuck to
+            // the camera rather than a person on the pitch.
+            CharacterVisual referee = MakeReferee(new Vector3(-8.2f, 0f, -5.6f));
+
+            var runnerGo = new GameObject("Match");
+            _runner = runnerGo.AddComponent<MatchRunner>();
+
+            var swipe = runnerGo.AddComponent<SwipeInput>();
+
+            _cycle = runnerGo.AddComponent<PenaltyCycle>();
+            _cycle.runner = _runner;
+            _cycle.ball = _ball;
+            _cycle.swipe = swipe;
+            _cycle.striker = striker;
+            _cycle.keeper = keeper;
+            _cycle.referee = referee;
+        }
+
+        private CharacterVisual MakeCharacter(string name, Team team, Vector3 position, float yaw)
+        {
+            var host = new GameObject(name + "Rig");
+            host.transform.position = position;
+            host.transform.rotation = Quaternion.Euler(0f, yaw, 0f);
+
+            var factory = host.AddComponent<HumanoidFactory>();
+            factory.primary = ToColor(team.Primary);
+            factory.neon = ToColor(team.Neon);
+            return factory.Create(host.transform, name);
+        }
+
+        private CharacterVisual MakeReferee(Vector3 position)
+        {
+            var host = new GameObject("RefereeRig");
+            host.transform.position = position;
+            host.transform.rotation = Quaternion.Euler(0f, 130f, 0f);
+
+            var factory = host.AddComponent<HumanoidFactory>();
+            factory.primary = new Color(0.08f, 0.09f, 0.11f);
+            factory.neon = new Color(1f, 0.82f, 0.25f);
+            return factory.Create(host.transform, "Referee");
+        }
+
+        private void BuildUi()
+        {
+            var hudGo = new GameObject("UI");
+            _hud = hudGo.AddComponent<MatchHud>();
+            _hud.Build(_home, _away);
+        }
+
+        private void Wire()
+        {
+            _runner.StateChanged += OnStateChanged;
+            _cycle.KickResolved += OnKickResolved;
+            _hud.Refresh(_runner.Director.Match);
+        }
+
+        private void OnDestroy()
+        {
+            if (_runner != null) _runner.StateChanged -= OnStateChanged;
+            if (_cycle != null) _cycle.KickResolved -= OnKickResolved;
+        }
+
+        private void OnStateChanged(GameState state)
+        {
+            _camera.FollowState(state);
+            _hud.Refresh(_runner.Director.Match);
+            _hud.ShowTiming(state == GameState.Aiming);
+
+            // §19: the crowd tightens before a kick and erupts after one. Driven
+            // from match state rather than from the celebration effect, so the
+            // stands react even when flashes and slow motion are switched off for
+            // accessibility or performance.
+            SetCrowdMood(state switch
+            {
+                GameState.RefereeReady or GameState.Whistle or GameState.Aiming
+                    or GameState.Shooting or GameState.BallInPlay => CrowdMood.Tension,
+                GameState.GoalResult or GameState.Celebration => CrowdMood.Goal,
+                GameState.SaveResult => CrowdMood.Save,
+                GameState.Victory or GameState.Defeat => CrowdMood.Victory,
+                _ => CrowdMood.Idle
+            });
+
+            switch (state)
+            {
+                case GameState.MatchIntro:
+                    _hud.Say($"{_home.Name} vs {_away.Name}");
+                    break;
+                case GameState.PrePenalty:
+                    _hud.SetPrompt(_runner.Director.Striker == Side.Home
+                        ? $"{_home.Name} to take it"
+                        : $"{_away.Name} to take it");
+                    _hud.Say(string.Empty);
+                    break;
+                case GameState.RefereeReady:
+                    _hud.Say("Referee ready");
+                    break;
+                case GameState.Whistle:
+                    _hud.Say("Whistle");
+                    break;
+                case GameState.Aiming:
+                    _hud.SetPrompt("Swipe to shoot");
+                    _hud.Say(string.Empty);
+                    break;
+                case GameState.SuddenDeath:
+                    _hud.Say("Sudden death");
+                    break;
+                case GameState.Victory:
+                case GameState.Defeat:
+                {
+                    (int home, int away) = ShootoutRules.Scoreline(_runner.Director.Match);
+                    Team winner = _runner.Director.Match.Winner == Side.Home ? _home : _away;
+                    _hud.SetPrompt(string.Empty);
+                    _hud.Say($"{winner.Name} win {Mathf.Max(home, away)}-{Mathf.Min(home, away)}");
+                    break;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Drive every stadium reaction from one place.
+        /// </summary>
+        /// <remarks>
+        /// The crowd, the flashes and the squad all read the same mood, so they
+        /// cannot disagree about whether something exciting just happened — which
+        /// is what a cheering crowd over a dead bank of flashes would look like.
+        /// </remarks>
+        private void SetCrowdMood(CrowdMood mood)
+        {
+            float intensity = mood switch
+            {
+                CrowdMood.Idle => 0.08f,
+                CrowdMood.Tension => 0.22f,
+                CrowdMood.Save => 0.7f,
+                _ => 1f
+            };
+
+            if (_stadium != null && _stadium.Crowd != null) _stadium.Crowd.SetMood(mood);
+            if (_flashes != null) _flashes.SetIntensity(intensity);
+            if (_squad != null) _squad.SetIntensity(intensity);
+        }
+
+        private void OnKickResolved(KickAttempt attempt)
+        {
+            _hud.Refresh(_runner.Director.Match);
+            _hud.SetPrompt(string.Empty);
+
+            // §23: the announcement is the classifier's, so the label and the
+            // effects can never disagree about how good a goal was.
+            if (StrikeClassifier.DeservesSlowMotion(attempt)) BeginSlowMotion();
+
+            switch (attempt.Result)
+            {
+                case KickResult.Goal:
+                    _hud.Say(StrikeClassifier.LabelFor(StrikeClassifier.Grade(attempt)));
+                    _camera.Impulse(0.18f);
+                    break;
+                case KickResult.Saved:
+                    _hud.Say(attempt.IsSpectacularSave ? "CYBER SAVE" : "Saved");
+                    _camera.Impulse(0.12f);
+                    break;
+                case KickResult.Woodwork:
+                    _hud.Say("Off the frame");
+                    _camera.Impulse(0.14f);
+                    break;
+                case KickResult.Expired:
+                    _hud.Say("Too slow");
+                    break;
+                default:
+                    _hud.Say("Wide");
+                    break;
+            }
+        }
+
+        /// <summary>
+        /// Drop into slow motion for the rarest moments (§23, §24).
+        /// </summary>
+        /// <remarks>
+        /// Uses <c>Time.timeScale</c>, which is why <see cref="MatchRunner"/> ticks
+        /// on <c>unscaledDeltaTime</c>: the visuals should slow, the shot clock
+        /// should not. Otherwise a spectacular goal would quietly hand the next
+        /// striker extra seconds to aim.
+        /// </remarks>
+        private void BeginSlowMotion()
+        {
+            Time.timeScale = 0.35f;
+            _slowMotionUntil = Time.unscaledTime + 1.1f;
+        }
+
+        private float _slowMotionUntil = -1f;
+
+        private void Update()
+        {
+            if (_slowMotionUntil > 0f && Time.unscaledTime >= _slowMotionUntil)
+            {
+                Time.timeScale = 1f;
+                _slowMotionUntil = -1f;
+            }
+
+            float dt = Time.deltaTime;
+            GameState state = _runner.Director.State;
+
+            _camera.UpdateCamera(dt, state == GameState.BallInPlay ? _ball.transform.position : (Vector3?)null);
+            _hud.SetClock(_runner.Director.ShotClockRemaining);
+            // §27: the HUD steps back once the ball is live, because that is the
+            // moment the player most wants to watch.
+            _hud.SetDimmed(state == GameState.BallInPlay || state == GameState.Celebration, dt);
+
+            if (state == GameState.Aiming)
+            {
+                _hud.SetTimingMarker((float)CyberGoal.Core.Input.TimingWindow.MarkerAt(
+                    _runner.Director.Elapsed));
+            }
+        }
+
+        private static Color ToColor(Rgb rgb) => new Color(rgb.R / 255f, rgb.G / 255f, rgb.B / 255f);
+    }
+}

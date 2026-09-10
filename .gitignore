@@ -1,18 +1,26 @@
+# ── Unity ────────────────────────────────────────────────────────────────────
+# Library/ is a multi-GB rebuildable cache. Temp/ and Obj/ likewise.
+unity/**/Library/
+unity/**/Temp/
+unity/**/Obj/
+unity/**/Build/
+unity/**/Builds/
+unity/**/Logs/
+unity/**/UserSettings/
+unity/**/MemoryCaptures/
+unity/**/Recordings/
+*.csproj.user
+*.unityproj
+*.sln.docstates
+
+# ── .NET ─────────────────────────────────────────────────────────────────────
+bin/
+obj/
+
+# ── Web prototype ────────────────────────────────────────────────────────────
 node_modules/
 dist/
-dist-ssr/
-*.local
-
-.vite/
-.DS_Store
-Thumbs.db
-
-.vscode/*
-!.vscode/extensions.json
-.idea/
-
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-*.tsbuildinfo
 dist-single/
+
+# ── macOS ────────────────────────────────────────────────────────────────────
+.DS_Store

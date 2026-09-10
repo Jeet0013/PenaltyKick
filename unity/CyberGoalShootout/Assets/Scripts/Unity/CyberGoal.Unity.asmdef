@@ -1,0 +1,11 @@
+{
+  "name": "CyberGoal.Unity",
+  "rootNamespace": "CyberGoal.Unity",
+  "references": [
+    "CyberGoal.Core"
+  ],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "autoReferenced": true,
+  "noEngineReferences": false
+}
