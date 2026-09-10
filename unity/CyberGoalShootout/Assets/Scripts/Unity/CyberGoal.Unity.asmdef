@@ -1,0 +1,14 @@
+{
+  "name": "CyberGoal.Unity",
+  "rootNamespace": "CyberGoal.Unity",
+  "references": [
+    "CyberGoal.Core",
+    "Unity.InputSystem",
+    "Unity.Cinemachine",
+    "Unity.TextMeshPro"
+  ],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "autoReferenced": true,
+  "noEngineReferences": false
+}

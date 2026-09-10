@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Targets netstandard2.1 because that is what Unity 6 consumes, and because it
+    is what lets `dotnet build` compile this assembly on a machine with no Unity
+    installed. Unity itself ignores this file and uses the .asmdef beside it;
+    the two must be kept describing the same thing.
+  -->
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <LangVersion>9.0</LangVersion>
+    <Nullable>disable</Nullable>
+    <AssemblyName>CyberGoal.Core</AssemblyName>
+    <RootNamespace>CyberGoal.Core</RootNamespace>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnableDefaultCompileItems>true</EnableDefaultCompileItems>
+  </PropertyGroup>
+
+</Project>
