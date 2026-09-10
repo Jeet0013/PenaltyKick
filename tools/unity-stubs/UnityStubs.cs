@@ -121,6 +121,7 @@ namespace UnityEngine
         public static float unscaledDeltaTime => 0.016f;
         public static float time => 0f;
         public static float unscaledTime => 0f;
+        public static float timeScale { get; set; }
     }
 
     public enum ScreenOrientation { AutoRotation, LandscapeLeft }

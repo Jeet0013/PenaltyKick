@@ -218,10 +218,14 @@ namespace CyberGoal.Unity.Core
             _hud.Refresh(_runner.Director.Match);
             _hud.SetPrompt(string.Empty);
 
+            // §23: the announcement is the classifier's, so the label and the
+            // effects can never disagree about how good a goal was.
+            if (StrikeClassifier.DeservesSlowMotion(attempt)) BeginSlowMotion();
+
             switch (attempt.Result)
             {
                 case KickResult.Goal:
-                    _hud.Say("GOAL");
+                    _hud.Say(StrikeClassifier.LabelFor(StrikeClassifier.Grade(attempt)));
                     _camera.Impulse(0.18f);
                     break;
                 case KickResult.Saved:
@@ -241,8 +245,31 @@ namespace CyberGoal.Unity.Core
             }
         }
 
+        /// <summary>
+        /// Drop into slow motion for the rarest moments (§23, §24).
+        /// </summary>
+        /// <remarks>
+        /// Uses <c>Time.timeScale</c>, which is why <see cref="MatchRunner"/> ticks
+        /// on <c>unscaledDeltaTime</c>: the visuals should slow, the shot clock
+        /// should not. Otherwise a spectacular goal would quietly hand the next
+        /// striker extra seconds to aim.
+        /// </remarks>
+        private void BeginSlowMotion()
+        {
+            Time.timeScale = 0.35f;
+            _slowMotionUntil = Time.unscaledTime + 1.1f;
+        }
+
+        private float _slowMotionUntil = -1f;
+
         private void Update()
         {
+            if (_slowMotionUntil > 0f && Time.unscaledTime >= _slowMotionUntil)
+            {
+                Time.timeScale = 1f;
+                _slowMotionUntil = -1f;
+            }
+
             float dt = Time.deltaTime;
             GameState state = _runner.Director.State;
 

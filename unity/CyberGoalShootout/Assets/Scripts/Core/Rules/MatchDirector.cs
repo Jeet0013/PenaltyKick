@@ -94,13 +94,17 @@ namespace CyberGoal.Core.Rules
 
         public event Action<GameState> StateChanged;
 
-        public MatchDirector(int seed)
+        public MatchDirector(int seed, ShootoutFormat format = ShootoutFormat.Standard)
         {
+            Seed = seed;
             Rng = new Rng(seed);
             // The coin toss is the first thing the seed decides, so replaying a
             // seed replays the whole match including who went first.
-            Match = ShootoutRules.CreateMatch(Rng.Chance(0.5) ? Side.Home : Side.Away);
+            Match = ShootoutRules.CreateMatch(Rng.Chance(0.5) ? Side.Home : Side.Away, format);
         }
+
+        /// <summary>The seed this match was created with, for replay (§26).</summary>
+        public int Seed { get; }
 
         public Side Striker => ShootoutRules.SideToKick(Match);
         public Side Keeper => Shootout.Other(Striker);
@@ -253,8 +257,8 @@ namespace CyberGoal.Core.Rules
 
             bool enteringSuddenDeath =
                 Match.Phase == Phase.SuddenDeath
-                && ShootoutRules.KicksTakenBy(Match, Side.Home) == Shootout.KicksPerSide
-                && ShootoutRules.KicksTakenBy(Match, Side.Away) == Shootout.KicksPerSide;
+                && ShootoutRules.KicksTakenBy(Match, Side.Home) == Match.KicksPerSide
+                && ShootoutRules.KicksTakenBy(Match, Side.Away) == Match.KicksPerSide;
 
             Enter(enteringSuddenDeath ? GameState.SuddenDeath : GameState.NextPenalty);
         }

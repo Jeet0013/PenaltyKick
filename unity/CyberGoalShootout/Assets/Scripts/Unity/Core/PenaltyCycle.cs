@@ -48,6 +48,17 @@ namespace CyberGoal.Unity.Core
         public event System.Action<KickAttempt> KickResolved;
 
         private readonly TendencyMemory _memory = new TendencyMemory();
+        private MatchRecorder _recorder;
+
+        /// <summary>
+        /// The match so far, as inputs only (§26).
+        /// </summary>
+        /// <remarks>
+        /// Built as the match is played rather than reconstructed afterwards,
+        /// because the keeper's commit is not recoverable from the result — a dive
+        /// that missed leaves no trace in the score.
+        /// </remarks>
+        public MatchRecording Recording => _recorder?.Build();
 
         private BallState _flight;
         private bool _inFlight;
@@ -69,7 +80,11 @@ namespace CyberGoal.Unity.Core
                 swipe.SwipeCompleted += OnSwipe;
                 swipe.GestureBegan += OnGestureBegan;
             }
-            if (runner != null) runner.StateChanged += OnStateChanged;
+            if (runner != null)
+            {
+                runner.StateChanged += OnStateChanged;
+                _recorder = new MatchRecorder(runner.Director.Seed, runner.Director.Match.Format);
+            }
         }
 
         private void OnDisable()
@@ -155,6 +170,7 @@ namespace CyberGoal.Unity.Core
             ball.SetTrail(true);
 
             _memory.Record(_input.TargetX, _input.TargetY);
+            _recorder?.Record(_input, _commit);
         }
 
         private void Update()

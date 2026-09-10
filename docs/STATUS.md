@@ -13,7 +13,7 @@ against 12–18 GB for an editor with Android and iOS build support.
 That splits everything below into two very different confidence levels:
 
 - **`Assets/Scripts/Core/`** — compiles under `dotnet build` and is covered by
-  **75 passing tests**. Verified.
+  **104 passing tests**, run by CI on every push. Verified.
 - **`Assets/Scripts/Unity/`** — typechecks only against hand-written stubs in
   `tools/unity-stubs/`. That catches typos, cross-file mistakes and type errors
   against Core, and it caught three on its first run. It proves **nothing** about
@@ -48,6 +48,11 @@ Support, open `unity/CyberGoalShootout`, press Play. No scene setup is needed �
 | Basic scoring (§6) | **WORKING** | 10 tests |
 | Perfect timing (§11) | **WORKING** | 6 tests |
 | One full penalty cycle (§60) | **PARTIAL** | Written and typechecked; never played |
+| Match formats (§5 Quick/Standard) | **WORKING** | 3 and 5 kicks; 6 tests |
+| Keeper gesture controls (§14) | **PARTIAL** | Parsing done and tested; not yet bound to input |
+| Special goal grades (§23) | **WORKING** | 9 tests; labels wired to the HUD |
+| Spectacular save (§24) | **WORKING** | Slow-motion gate is one function |
+| Replay recording (§26) | **PARTIAL** | Recording and re-simulation tested; no replay camera |
 
 ## Phase C — Match rules (arrived early, via the port)
 
@@ -72,16 +77,28 @@ Support, open `unity/CyberGoalShootout`, press Play. No scene setup is needed �
 | Pitch markings | **WORKING** | Regulation box, arc, spot — the main scale cue |
 | Neon / holograms (§20) | **PARTIAL** | Emissive trim only |
 
+## Determinism, and why it is listed as a feature
+
+`MatchReplayTests` plays a full match, records **only the inputs**, replays it,
+and asserts every result and every crossing point matches to the last bit. A
+further test tampers with a recording and asserts the outcome changes.
+
+This is the keystone. The analytic ball flight, the seeded `Rng`, the fixed
+timestep and the doubles in `Vec3` all exist to make it pass, and §40's
+server-side validation is the same property viewed from the other side: a match
+that can be re-derived from its inputs can be checked by a server from its
+inputs. If that test ever fails, replays are wrong and honest players would be
+rejected as cheats.
+
 ## Not started
 
-Everything below is **NOT IMPLEMENTED**, and correctly so — the brief says to
-stop after Phase B.
+Everything below is **NOT IMPLEMENTED**. The brief says to stop after Phase B,
+and these are Phase C and beyond.
 
-Audio (§30), dynamic music (§31), haptics (§29), replay (§26), goal celebration
-sequence (§22), special goal types (§23), menus, team select (§32 data exists,
-no screen), local two-player (§5), keeper-role play for the human (§14),
-tournament (§38), ranking (§39), multiplayer (§40), cosmetics (§36),
-player attributes (§34).
+Audio (§30), dynamic music (§31), haptics (§29), replay *camera* (§26),
+goal celebration sequence (§22), menus, team select screen (§32 data exists),
+local two-player (§5), tournament (§38), ranking (§39), online multiplayer
+(§40), cosmetics (§36), player attributes (§34).
 
 ## Known gaps worth naming
 

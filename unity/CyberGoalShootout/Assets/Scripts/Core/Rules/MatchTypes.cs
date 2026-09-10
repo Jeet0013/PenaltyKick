@@ -61,13 +61,20 @@ namespace CyberGoal.Core.Rules
         public Phase Phase { get; }
         /// <summary>Set only once the match is over.</summary>
         public Side? Winner { get; }
+        /// <summary>Quick or Standard (§5). Fixed for the life of the match.</summary>
+        public ShootoutFormat Format { get; }
 
-        public MatchState(IReadOnlyList<KickRecord> kicks, Side firstKicker, Phase phase, Side? winner)
+        /// <summary>Kicks each side gets in the standard phase.</summary>
+        public int KicksPerSide => Shootout.KicksFor(Format);
+
+        public MatchState(IReadOnlyList<KickRecord> kicks, Side firstKicker, Phase phase,
+            Side? winner, ShootoutFormat format = ShootoutFormat.Standard)
         {
             Kicks = kicks;
             FirstKicker = firstKicker;
             Phase = phase;
             Winner = winner;
+            Format = format;
         }
 
         public static readonly IReadOnlyList<KickRecord> NoKicks =
@@ -82,10 +89,31 @@ namespace CyberGoal.Core.Rules
         Pending
     }
 
+    /// <summary>The match formats of §5.</summary>
+    public enum ShootoutFormat
+    {
+        /// <summary>Three each. §5's QUICK SHOOTOUT, 1-2 minutes.</summary>
+        Quick,
+        /// <summary>Five each. §5's STANDARD SHOOTOUT, 3-5 minutes.</summary>
+        Standard
+    }
+
     public static class Shootout
     {
-        /// <summary>Five each in the standard phase, per §6.</summary>
+        /// <summary>
+        /// Five each in the standard phase, per §6.
+        /// </summary>
+        /// <remarks>
+        /// Kept as the default rather than the only answer. §5 also specifies a
+        /// three-kick Quick Shootout, and the number of kicks is exactly the kind
+        /// of rule that gets hard-coded in eleven places and then cannot be
+        /// changed — which is why <see cref="MatchState"/> now carries its format
+        /// and every rule reads it from there.
+        /// </remarks>
         public const int KicksPerSide = 5;
+
+        public static int KicksFor(ShootoutFormat format)
+            => format == ShootoutFormat.Quick ? 3 : 5;
 
         /// <summary>The striker's clock, per §57's "match ends before all penalties" case.</summary>
         public const double ShotClockSeconds = 8.0;

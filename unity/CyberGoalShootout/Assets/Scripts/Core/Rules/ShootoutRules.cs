@@ -15,8 +15,9 @@ namespace CyberGoal.Core.Rules
     /// </remarks>
     public static class ShootoutRules
     {
-        public static MatchState CreateMatch(Side firstKicker)
-            => new MatchState(MatchState.NoKicks, firstKicker, Phase.Standard, null);
+        public static MatchState CreateMatch(
+            Side firstKicker, ShootoutFormat format = ShootoutFormat.Standard)
+            => new MatchState(MatchState.NoKicks, firstKicker, Phase.Standard, null, format);
 
         public static int ScoreOf(MatchState state, Side side)
             => state.Kicks.Count(k => k.By == side && Shootout.IsGoal(k.Result));
@@ -28,7 +29,7 @@ namespace CyberGoal.Core.Rules
         public static int KicksRemaining(MatchState state, Side side)
         {
             if (state.Phase != Phase.Standard) return 0;
-            return Math.Max(0, Shootout.KicksPerSide - KicksTakenBy(state, side));
+            return Math.Max(0, state.KicksPerSide - KicksTakenBy(state, side));
         }
 
         /// <summary>
@@ -95,7 +96,7 @@ namespace CyberGoal.Core.Rules
             int homeKicks = KicksTakenBy(state, Side.Home);
             int awayKicks = KicksTakenBy(state, Side.Away);
             if (homeKicks != awayKicks) return null;
-            if (homeKicks <= Shootout.KicksPerSide) return null;
+            if (homeKicks <= state.KicksPerSide) return null;
 
             // Only the round just completed can decide it; every earlier round was
             // level or the match would already be over.
@@ -115,8 +116,8 @@ namespace CyberGoal.Core.Rules
 
         /// <summary>Both sides have used their five.</summary>
         private static bool StandardPhaseExhausted(MatchState state)
-            => KicksTakenBy(state, Side.Home) >= Shootout.KicksPerSide
-            && KicksTakenBy(state, Side.Away) >= Shootout.KicksPerSide;
+            => KicksTakenBy(state, Side.Home) >= state.KicksPerSide
+            && KicksTakenBy(state, Side.Away) >= state.KicksPerSide;
 
         /// <summary>
         /// Record a kick and re-derive the match.
@@ -139,12 +140,12 @@ namespace CyberGoal.Core.Rules
                 new KickRecord(by, result, KicksTakenBy(state, by) + 1)
             };
 
-            var next = new MatchState(kicks, state.FirstKicker, state.Phase, null);
+            var next = new MatchState(kicks, state.FirstKicker, state.Phase, null, state.Format);
 
             Side? clinched = ClinchedBy(next);
             if (clinched.HasValue)
             {
-                return new MatchState(kicks, state.FirstKicker, Phase.Complete, clinched);
+                return new MatchState(kicks, state.FirstKicker, Phase.Complete, clinched, state.Format);
             }
 
             if (next.Phase == Phase.Standard && StandardPhaseExhausted(next))
@@ -154,16 +155,16 @@ namespace CyberGoal.Core.Rules
                 if (home != away)
                 {
                     return new MatchState(kicks, state.FirstKicker, Phase.Complete,
-                        home > away ? Side.Home : Side.Away);
+                        home > away ? Side.Home : Side.Away, state.Format);
                 }
                 // Level after five each: the match continues, one round at a time.
-                return new MatchState(kicks, state.FirstKicker, Phase.SuddenDeath, null);
+                return new MatchState(kicks, state.FirstKicker, Phase.SuddenDeath, null, state.Format);
             }
 
             Side? sudden = SuddenDeathWinner(next);
             if (sudden.HasValue)
             {
-                return new MatchState(kicks, state.FirstKicker, Phase.Complete, sudden);
+                return new MatchState(kicks, state.FirstKicker, Phase.Complete, sudden, state.Format);
             }
 
             return next;
@@ -184,7 +185,7 @@ namespace CyberGoal.Core.Rules
                 .Select(k => Shootout.IsGoal(k.Result) ? Pip.Goal : Pip.Miss)
                 .ToList();
 
-            while (pips.Count < Shootout.KicksPerSide) pips.Add(Pip.Pending);
+            while (pips.Count < state.KicksPerSide) pips.Add(Pip.Pending);
             return pips;
         }
 
